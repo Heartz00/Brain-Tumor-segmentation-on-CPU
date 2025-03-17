@@ -166,8 +166,7 @@ if uploaded_folder is not None:
                     mask_argmax = None
                 
                 # Select slice indices for visualization
-                depth = combined_image.shape[2]  # Get the depth dimension of the combined_image
-                slice_indices = [depth // 4, depth // 2, 3 * depth // 4]  # Example: 25%, 50%, 75% of depth
+                slice_indices = [75, 90, 100]  # Example: 25%, 50%, 75% of depth
                 
                 # Ensure slice indices are within bounds
                 slice_indices = [min(idx, depth - 1) for idx in slice_indices]
