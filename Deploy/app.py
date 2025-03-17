@@ -168,9 +168,7 @@ if uploaded_folder is not None:
                 # Select slice indices for visualization
                 slice_indices = [75, 90, 100]  # Example: 25%, 50%, 75% of depth
                 
-                # Ensure slice indices are within bounds
-                slice_indices = [min(idx, depth - 1) for idx in slice_indices]
-                
+            
                 # Plotting Results
                 fig, ax = plt.subplots(3, 4, figsize=(18, 12))
                 
