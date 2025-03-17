@@ -50,6 +50,7 @@ def preprocess_nifti(file_path):
 def combine_channels(t1n, t1c, t2f, t2w):
     # Stack the 4 channels along the last axis
     combined_image = np.stack([t1n, t1c, t2f, t2w], axis=3)
+    combined_image = combined_image[56:184, 56:184, 13:141]
     return combined_image
 
 # Function to run segmentation
