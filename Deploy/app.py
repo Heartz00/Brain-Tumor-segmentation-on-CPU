@@ -172,72 +172,84 @@ if uploaded_folder is not None:
             # Combine the 4 channels
             combined_image = combine_channels(t1n, t1c, t2f, t2w)
             
-            # Extract a random patch and augment the image
-            combined_image = extract_patch(combined_image, patch_size=(64, 64, 64))
-            combined_image = augment_image(combined_image)
+            # Print the shape of combined_image for debugging
+            st.write(f"Shape of combined_image: {combined_image.shape}")
             
-            # Run segmentation
-            st.write("Running segmentation...")
-            segmentation_result = run_segmentation(model, combined_image)
-            
-            # Display the segmentation result
-            st.write("Segmentation completed! Displaying results...")
-            
-            # Load the ground truth mask if available
-            if mask_path:
-                mask = nib.load(mask_path).get_fdata()
-                mask = mask.astype(np.uint8)
-                mask[mask == 4] = 3  # Reassign mask values 4 to 3
-                mask_argmax = np.argmax(to_categorical(mask, num_classes=4), axis=3)
+            # Ensure the combined_image has the correct shape
+            if len(combined_image.shape) != 4:
+                st.error(f"Unexpected shape for combined_image: {combined_image.shape}. Expected shape: (height, width, depth, channels).")
             else:
-                mask_argmax = None
-            
-            # Select slice indices for visualization
-            slice_indices = [75, 90, 100]  # Change slice indices as needed
-            
-            # Plotting Results
-            fig, ax = plt.subplots(3, 4, figsize=(18, 12))
-            
-            for i, n_slice in enumerate(slice_indices):
-                # Rotate images to correct orientation
-                test_img_rotated = np.rot90(combined_image[:, :, n_slice, 1])  # Rotating 90 degrees
-                test_prediction_rotated = np.rot90(segmentation_result[:, :, n_slice])
+                # Extract a random patch and augment the image
+                combined_image = extract_patch(combined_image, patch_size=(64, 64, 64))
+                combined_image = augment_image(combined_image)
+                
+                # Run segmentation
+                st.write("Running segmentation...")
+                segmentation_result = run_segmentation(model, combined_image)
+                
+                # Display the segmentation result
+                st.write("Segmentation completed! Displaying results...")
+                
+                # Load the ground truth mask if available
+                if mask_path:
+                    mask = nib.load(mask_path).get_fdata()
+                    mask = mask.astype(np.uint8)
+                    mask[mask == 4] = 3  # Reassign mask values 4 to 3
+                    mask_argmax = np.argmax(to_categorical(mask, num_classes=4), axis=3)
+                else:
+                    mask_argmax = None
+                
+                # Select slice indices for visualization
+                slice_indices = [75, 90, 100]  # Change slice indices as needed
                 
                 # Plotting Results
-                ax[i, 0].imshow(test_img_rotated, cmap='gray')
-                ax[i, 0].set_title(f'Testing Image - Slice {n_slice}')
+                fig, ax = plt.subplots(3, 4, figsize=(18, 12))
                 
-                if mask_argmax is not None:
-                    test_mask_rotated = np.rot90(mask_argmax[:, :, n_slice])
-                    ax[i, 1].imshow(test_mask_rotated)
-                    ax[i, 1].set_title(f'Ground Truth - Slice {n_slice}')
-                else:
-                    ax[i, 1].axis('off')  # Hide the ground truth subplot if no mask is available
+                for i, n_slice in enumerate(slice_indices):
+                    # Ensure the slice index is within the depth dimension
+                    if n_slice >= combined_image.shape[2]:
+                        st.error(f"Slice index {n_slice} is out of bounds for depth dimension (max depth: {combined_image.shape[2]}).")
+                        continue
+                    
+                    # Rotate images to correct orientation
+                    test_img_rotated = np.rot90(combined_image[:, :, n_slice, 0])  # Rotating 90 degrees
+                    test_prediction_rotated = np.rot90(segmentation_result[:, :, n_slice])
+                    
+                    # Plotting Results
+                    ax[i, 0].imshow(test_img_rotated, cmap='gray')
+                    ax[i, 0].set_title(f'Testing Image - Slice {n_slice}')
+                    
+                    if mask_path:
+                        test_mask_rotated = np.rot90(mask_argmax[:, :, n_slice])
+                        ax[i, 1].imshow(test_mask_rotated)
+                        ax[i, 1].set_title(f'Ground Truth - Slice {n_slice}')
+                    else:
+                        ax[i, 1].axis('off')  # Hide the ground truth subplot if no mask is available
+                    
+                    ax[i, 2].imshow(test_prediction_rotated)
+                    ax[i, 2].set_title(f'Prediction - Slice {n_slice}')
+                    
+                    ax[i, 3].imshow(test_img_rotated, cmap='gray')
+                    ax[i, 3].imshow(test_prediction_rotated, alpha=0.5)  # Overlay prediction mask
+                    ax[i, 3].set_title(f'Overlay - Slice {n_slice}')
                 
-                ax[i, 2].imshow(test_prediction_rotated)
-                ax[i, 2].set_title(f'Prediction - Slice {n_slice}')
+                plt.tight_layout()
+                st.pyplot(fig)
                 
-                ax[i, 3].imshow(test_img_rotated, cmap='gray')
-                ax[i, 3].imshow(test_prediction_rotated, alpha=0.5)  # Overlay prediction mask
-                ax[i, 3].set_title(f'Overlay - Slice {n_slice}')
-            
-            plt.tight_layout()
-            st.pyplot(fig)
-            
-            # Save the segmentation result
-            output_file = "segmentation_result.nii.gz"
-            nib.save(nib.Nifti1Image(segmentation_result.astype(np.float32), np.eye(4)), output_file)
-            
-            # Provide a download link for the segmentation result
-            with open(output_file, "rb") as f:
-                st.download_button(
-                    label="Download Segmentation Result",
-                    data=f,
-                    file_name=output_file,
-                    mime="application/octet-stream"
-                )
-            
-            # Clean up temporary files
-            os.remove(output_file)
+                # Save the segmentation result
+                output_file = "segmentation_result.nii.gz"
+                nib.save(nib.Nifti1Image(segmentation_result.astype(np.float32), np.eye(4)), output_file)
+                
+                # Provide a download link for the segmentation result
+                with open(output_file, "rb") as f:
+                    st.download_button(
+                        label="Download Segmentation Result",
+                        data=f,
+                        file_name=output_file,
+                        mime="application/octet-stream"
+                    )
+                
+                # Clean up temporary files
+                os.remove(output_file)
         else:
             st.error("The uploaded folder does not contain all required NIfTI files (T1n, T1c, T2f, T2w).")
