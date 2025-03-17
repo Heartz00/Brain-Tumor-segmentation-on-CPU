@@ -12,7 +12,7 @@ import zipfile  # To handle folder uploads
 import tempfile  # To handle temporary files
 
 # Title of the app
-st.title("Brain Tumor Segmentation using 3D U-Net")
+st.title("Brain Tumor Segmentation using 3D U-Net - (Lightweight Architecture on Normal CPUs)")
 
 # Function to download the default model from Google Drive
 def download_default_model():
@@ -97,7 +97,7 @@ def augment_image(image):
 def run_segmentation(model, input_image):
     # Add batch and channel dimensions
     input_image = np.expand_dims(input_image, axis=0)  # Add batch dimension
-    input_image = np.expand_dims(input_image, axis=-1)  # Add channel dimension
+    #input_image = np.expand_dims(input_image, axis=-1)  # Add channel dimension
     
     prediction = model.predict(input_image)
     prediction_argmax = np.argmax(prediction, axis=4)[0, :, :, :]
