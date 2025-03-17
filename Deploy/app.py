@@ -9,7 +9,7 @@ from scipy.ndimage import rotate
 from tensorflow.keras.utils import to_categorical
 
 # Title of the app
-st.title("Brain Tumor Segmentation using 3D U-Net")
+st.title("Brain Tumor Segmentation using 3D U-Net (Lightweight Architecture for CPU based systems")
 
 # Load the default model
 @st.cache_resource  # Cache the model to avoid reloading on every interaction
