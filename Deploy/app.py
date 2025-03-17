@@ -183,7 +183,7 @@ if uploaded_folder is not None:
                 # Extract a random patch and augment the image
                 combined_image = extract_patch(combined_image, patch_size=(64, 64, 64))
                 combined_image = augment_image(combined_image)
-                
+                st.write(f"Shape of combined_imag after extraction and augmentatione: {combined_image.shape}")
                 # Run segmentation
                 st.write("Running segmentation...")
                 segmentation_result = run_segmentation(model, combined_image)
