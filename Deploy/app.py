@@ -60,8 +60,7 @@ def run_segmentation(model, input_image):
     input_image = np.expand_dims(input_image, axis=0)  # Add batch dimension
     #input_image = np.expand_dims(input_image, axis=-1)  # Add channel dimension
     
-    # Print the shape of input_image for debugging
-    st.write(f"Shape of input_image: {input_image.shape}")
+
     
     # Ensure the input_image has the correct shape
     if len(input_image.shape) != 5:
