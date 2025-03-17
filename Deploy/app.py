@@ -200,7 +200,7 @@ if uploaded_folder is not None:
             
             for i, n_slice in enumerate(slice_indices):
                 # Rotate images to correct orientation
-                test_img_rotated = np.rot90(combined_image[:, :, n_slice, 0])  # Rotating 90 degrees
+                test_img_rotated = np.rot90(combined_image[:, :, n_slice, 1])  # Rotating 90 degrees
                 test_prediction_rotated = np.rot90(segmentation_result[:, :, n_slice])
                 
                 # Plotting Results
