@@ -7,15 +7,30 @@ import os
 import matplotlib.pyplot as plt
 from scipy.ndimage import rotate
 from tensorflow.keras.utils import to_categorical
+import gdown  # For downloading files from Google Drive
 
 # Title of the app
-st.title("Brain Tumor Segmentation using 3D U-Net (Lightweight Architecture for CPU based systems")
+st.title("Brain Tumor Segmentation using 3D U-Net")
+
+# Function to download the default model from Google Drive
+def download_default_model():
+    # Google Drive file ID for the default model
+    file_id = "YOUR_GOOGLE_DRIVE_FILE_ID"  # Replace with your file ID
+    output_path = "default_model.keras"
+    
+    # Download the file if it doesn't already exist
+    if not os.path.exists(output_path):
+        url = f"https://drive.google.com/uc?id={file_id}"
+        gdown.download(url, output_path, quiet=False)
+    
+    return output_path
 
 # Load the default model
 @st.cache_resource  # Cache the model to avoid reloading on every interaction
 def load_default_model():
-    default_model_path = "saved_model/3D_unet_100_epochs_2_batch_patch_training.keras"
-    model = load_model(default_model_path, compile=False)
+    # Download the model from Google Drive
+    model_path = download_default_model()
+    model = load_model(model_path, compile=False)
     return model
 
 default_model = load_default_model()
