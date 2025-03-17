@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 from scipy.ndimage import rotate
 from tensorflow.keras.utils import to_categorical
 import gdown  # For downloading files from Google Drive
+import zipfile  # To handle folder uploads
+import tempfile  # To handle temporary files
 
 # Title of the app
 st.title("Brain Tumor Segmentation using 3D U-Net")
@@ -36,7 +38,7 @@ def load_default_model():
 default_model = load_default_model()
 
 # Function to preprocess a NIfTI file
-def preprocess_nifti(file_path, mask_path=None, patch_size=(128, 128, 128)):
+def preprocess_nifti(file_path):
     # Load the NIfTI file
     image = nib.load(file_path).get_fdata()
     
@@ -44,58 +46,36 @@ def preprocess_nifti(file_path, mask_path=None, patch_size=(128, 128, 128)):
     scaler = MinMaxScaler()
     image = scaler.fit_transform(image.reshape(-1, image.shape[-1])).reshape(image.shape)
     
-    # Load and preprocess the mask if provided
-    if mask_path:
-        mask = nib.load(mask_path).get_fdata()
-        mask = mask.astype(np.uint8)
-        mask[mask == 4] = 3  # Reassign mask values 4 to 3
-    else:
-        mask = None
-    
-    # Crop to a size divisible by 64 (or any desired size)
-    start_x = (image.shape[0] - patch_size[0]) // 2
-    start_y = (image.shape[1] - patch_size[1]) // 2
-    start_z = (image.shape[2] - patch_size[2]) // 2
-    
-    image = image[start_x:start_x + patch_size[0],
-                  start_y:start_y + patch_size[1],
-                  start_z:start_z + patch_size[2]]
-    
-    if mask is not None:
-        mask = mask[start_x:start_x + patch_size[0],
-                    start_y:start_y + patch_size[1],
-                    start_z:start_z + patch_size[2]]
-    
-    # Expand dimensions for model input
-    image = np.expand_dims(image, axis=0)  # Add batch dimension
-    image = np.expand_dims(image, axis=-1)  # Add channel dimension
-    
-    if mask is not None:
-        mask = to_categorical(mask, num_classes=4)
-        mask = np.expand_dims(mask, axis=0)  # Add batch dimension
-    
-    return image, mask
+    return image
+
+# Function to combine 4 channels into a single 4-channel numpy array
+def combine_channels(t1n, t1c, t2f, t2w):
+    # Stack the 4 channels along the last axis
+    combined_image = np.stack([t1n, t1c, t2f, t2w], axis=3)
+    return combined_image
 
 # Function to extract a patch from an image
 def extract_patch(image, patch_size):
-    img_shape = image.shape[1:4]  # Exclude batch and channel dimensions
+    img_shape = image.shape[:3]  # Exclude the channel dimension
     patch_x = np.random.randint(0, max(img_shape[0] - patch_size[0], 1))
     patch_y = np.random.randint(0, max(img_shape[1] - patch_size[1], 1))
     patch_z = np.random.randint(0, max(img_shape[2] - patch_size[2], 1))
     
-    return image[:, patch_x:patch_x + patch_size[0], patch_y:patch_y + patch_size[1], patch_z:patch_z + patch_size[2], :]
+    return image[patch_x:patch_x + patch_size[0],
+                 patch_y:patch_y + patch_size[1],
+                 patch_z:patch_z + patch_size[2], :]
 
 # Function to augment an image
 def augment_image(image):
     # Rotation
     angle = np.random.uniform(-15, 15)
-    image = rotate(image, angle, axes=(1, 2), reshape=False, mode='reflect')
+    image = rotate(image, angle, axes=(0, 1), reshape=False, mode='reflect')
     
     # Flipping
     if np.random.rand() > 0.5:
-        image = np.flip(image, axis=1)
+        image = np.flip(image, axis=0)
     if np.random.rand() > 0.5:
-        image = np.flip(image, axis=2)
+        image = np.flip(image, axis=1)
     
     # Brightness Adjustment
     brightness = np.random.uniform(0.9, 1.1)
@@ -115,6 +95,10 @@ def augment_image(image):
 
 # Function to run segmentation
 def run_segmentation(model, input_image):
+    # Add batch and channel dimensions
+    input_image = np.expand_dims(input_image, axis=0)  # Add batch dimension
+    input_image = np.expand_dims(input_image, axis=-1)  # Add channel dimension
+    
     prediction = model.predict(input_image)
     prediction_argmax = np.argmax(prediction, axis=4)[0, :, :, :]
     return prediction_argmax
@@ -141,64 +125,88 @@ else:
     model = default_model
     st.sidebar.info("Using the default model.")
 
-# Main app: Upload NIfTI file
-st.header("Upload a NIfTI File for Segmentation")
-uploaded_file = st.file_uploader("Upload a NIfTI file (.nii.gz)", type=["nii.gz"])
-uploaded_mask = st.file_uploader("Upload a corresponding mask file (.nii.gz)", type=["nii.gz"])
+# Main app: Upload a folder containing NIfTI files
+st.header("Upload a Folder Containing NIfTI Files")
+uploaded_folder = st.file_uploader("Upload a folder (as a zip file) containing T1n, T1c, T2f, T2w NIfTI files", type=["zip"])
 
-if uploaded_file is not None:
-    # Save the uploaded file temporarily
-    with open("temp_file.nii.gz", "wb") as f:
-        f.write(uploaded_file.getbuffer())
-    
-    if uploaded_mask is not None:
-        with open("temp_mask.nii.gz", "wb") as f:
-            f.write(uploaded_mask.getbuffer())
-        mask_path = "temp_mask.nii.gz"
-    else:
+if uploaded_folder is not None:
+    # Create a temporary directory to extract the zip file
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # Save the uploaded zip file
+        zip_path = os.path.join(temp_dir, "uploaded_folder.zip")
+        with open(zip_path, "wb") as f:
+            f.write(uploaded_folder.getbuffer())
+        
+        # Extract the zip file
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            zip_ref.extractall(temp_dir)
+        
+        # Find the NIfTI files in the extracted folder
+        t1n_path = None
+        t1c_path = None
+        t2f_path = None
+        t2w_path = None
         mask_path = None
-    
-    # Preprocess the uploaded file
-    input_image, input_mask = preprocess_nifti("temp_file.nii.gz", mask_path)
-    
-    # Extract a random patch and augment the image
-    input_image = extract_patch(input_image, patch_size=(64, 64, 64))
-    input_image = augment_image(input_image)
-    
-    # Run segmentation
-    st.write("Running segmentation...")
-    segmentation_result = run_segmentation(model, input_image)
-    
-    # Display the segmentation result
-    st.write("Segmentation completed! Displaying results...")
-    
-    # Visualize a random slice
-    n_slice = st.slider("Select a slice to visualize", 0, segmentation_result.shape[2] - 1, segmentation_result.shape[2] // 2)
-    
-    fig, ax = plt.subplots(1, 2, figsize=(12, 6))
-    ax[0].imshow(input_image[0, :, :, n_slice, 0], cmap='gray')
-    ax[0].set_title("Input Image")
-    ax[1].imshow(segmentation_result[:, :, n_slice], cmap='viridis')
-    ax[1].set_title("Segmentation Result")
-    st.pyplot(fig)
-    
-    # Save the segmentation result
-    output_file = "segmentation_result.nii.gz"
-    nib.save(nib.Nifti1Image(segmentation_result, np.eye(4)), output_file)
-    
-    # Provide a download link for the segmentation result
-    with open(output_file, "rb") as f:
-        st.download_button(
-            label="Download Segmentation Result",
-            data=f,
-            file_name=output_file,
-            mime="application/octet-stream"
-        )
-    
-    # Clean up temporary files
-    os.remove("temp_file.nii.gz")
-    if uploaded_mask is not None:
-        os.remove("temp_mask.nii.gz")
-    os.remove(output_file)
-    if uploaded_model is not None:
-        os.remove("temp_model.keras")
+        
+        for root, _, files in os.walk(temp_dir):
+            for file in files:
+                if file.endswith("t1n.nii.gz"):
+                    t1n_path = os.path.join(root, file)
+                elif file.endswith("t1c.nii.gz"):
+                    t1c_path = os.path.join(root, file)
+                elif file.endswith("t2f.nii.gz"):
+                    t2f_path = os.path.join(root, file)
+                elif file.endswith("t2w.nii.gz"):
+                    t2w_path = os.path.join(root, file)
+                elif file.endswith("seg.nii.gz"):
+                    mask_path = os.path.join(root, file)
+        
+        # Check if all required files are found
+        if t1n_path and t1c_path and t2f_path and t2w_path:
+            # Preprocess each channel
+            t1n = preprocess_nifti(t1n_path)
+            t1c = preprocess_nifti(t1c_path)
+            t2f = preprocess_nifti(t2f_path)
+            t2w = preprocess_nifti(t2w_path)
+            
+            # Combine the 4 channels
+            combined_image = combine_channels(t1n, t1c, t2f, t2w)
+            
+            # Extract a random patch and augment the image
+            combined_image = extract_patch(combined_image, patch_size=(64, 64, 64))
+            combined_image = augment_image(combined_image)
+            
+            # Run segmentation
+            st.write("Running segmentation...")
+            segmentation_result = run_segmentation(model, combined_image)
+            
+            # Display the segmentation result
+            st.write("Segmentation completed! Displaying results...")
+            
+            # Visualize a random slice
+            n_slice = st.slider("Select a slice to visualize", 0, segmentation_result.shape[2] - 1, segmentation_result.shape[2] // 2)
+            
+            fig, ax = plt.subplots(1, 2, figsize=(12, 6))
+            ax[0].imshow(combined_image[:, :, n_slice, 0], cmap='gray')  # Display the first channel (T1n)
+            ax[0].set_title("Input Image (T1n)")
+            ax[1].imshow(segmentation_result[:, :, n_slice], cmap='viridis')
+            ax[1].set_title("Segmentation Result")
+            st.pyplot(fig)
+            
+            # Save the segmentation result
+            output_file = "segmentation_result.nii.gz"
+            nib.save(nib.Nifti1Image(segmentation_result, np.eye(4)), output_file)
+            
+            # Provide a download link for the segmentation result
+            with open(output_file, "rb") as f:
+                st.download_button(
+                    label="Download Segmentation Result",
+                    data=f,
+                    file_name=output_file,
+                    mime="application/octet-stream"
+                )
+            
+            # Clean up temporary files
+            os.remove(output_file)
+        else:
+            st.error("The uploaded folder does not contain all required NIfTI files (T1n, T1c, T2f, T2w).")
