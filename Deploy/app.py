@@ -98,7 +98,7 @@ def augment_image(image):
 def run_segmentation(model, input_image):
     # Add batch and channel dimensions
     input_image = np.expand_dims(input_image, axis=0)  # Add batch dimension
-    input_image = np.expand_dims(input_image, axis=-1)  # Add channel dimension
+    #input_image = np.expand_dims(input_image, axis=-1)  # Add channel dimension
     
     prediction = model.predict(input_image)
     prediction_argmax = np.argmax(prediction, axis=4)[0, :, :, :]
@@ -213,7 +213,7 @@ if uploaded_folder is not None:
                         continue
                     
                     # Rotate images to correct orientation
-                    test_img_rotated = np.rot90(combined_image[:, :, n_slice, 0])  # Rotating 90 degrees
+                    test_img_rotated = np.rot90(combined_image[:, :, n_slice, 1])  # Rotating 90 degrees
                     test_prediction_rotated = np.rot90(segmentation_result[:, :, n_slice])
                     
                     # Plotting Results
