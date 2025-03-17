@@ -12,12 +12,12 @@ import zipfile  # To handle folder uploads
 import tempfile  # To handle temporary files
 
 # Title of the app
-st.title("Brain Tumor Segmentation using 3D U-Net (Lightweight Architecture on Normal CPUs)")
+st.title("Brain Tumor Segmentation using 3D U-Net")
 
 # Function to download the default model from Google Drive
 def download_default_model():
     # Google Drive file ID for the default model
-    file_id = "1lV1SgafomQKwgv1NW2cjlpyb4LwZXFwX"  # Replace with your file ID
+    file_id = "YOUR_GOOGLE_DRIVE_FILE_ID"  # Replace with your file ID
     output_path = "default_model.keras"
     
     # Download the file if it doesn't already exist
@@ -183,14 +183,45 @@ if uploaded_folder is not None:
             # Display the segmentation result
             st.write("Segmentation completed! Displaying results...")
             
-            # Visualize a random slice
-            n_slice = st.slider("Select a slice to visualize", 0, segmentation_result.shape[2] - 1, segmentation_result.shape[2] // 2)
+            # Load the ground truth mask if available
+            if mask_path:
+                mask = nib.load(mask_path).get_fdata()
+                mask = mask.astype(np.uint8)
+                mask[mask == 4] = 3  # Reassign mask values 4 to 3
+                mask_argmax = np.argmax(to_categorical(mask, num_classes=4), axis=3)
+            else:
+                mask_argmax = None
             
-            fig, ax = plt.subplots(1, 2, figsize=(12, 6))
-            ax[0].imshow(combined_image[:, :, n_slice, 0], cmap='gray')  # Display the first channel (T1n)
-            ax[0].set_title("Input Image (T1n)")
-            ax[1].imshow(segmentation_result[:, :, n_slice], cmap='viridis')
-            ax[1].set_title("Segmentation Result")
+            # Select slice indices for visualization
+            slice_indices = [75, 90, 100]  # Change slice indices as needed
+            
+            # Plotting Results
+            fig, ax = plt.subplots(3, 4, figsize=(18, 12))
+            
+            for i, n_slice in enumerate(slice_indices):
+                # Rotate images to correct orientation
+                test_img_rotated = np.rot90(combined_image[:, :, n_slice, 0])  # Rotating 90 degrees
+                test_prediction_rotated = np.rot90(segmentation_result[:, :, n_slice])
+                
+                # Plotting Results
+                ax[i, 0].imshow(test_img_rotated, cmap='gray')
+                ax[i, 0].set_title(f'Testing Image - Slice {n_slice}')
+                
+                if mask_argmax is not None:
+                    test_mask_rotated = np.rot90(mask_argmax[:, :, n_slice])
+                    ax[i, 1].imshow(test_mask_rotated)
+                    ax[i, 1].set_title(f'Ground Truth - Slice {n_slice}')
+                else:
+                    ax[i, 1].axis('off')  # Hide the ground truth subplot if no mask is available
+                
+                ax[i, 2].imshow(test_prediction_rotated)
+                ax[i, 2].set_title(f'Prediction - Slice {n_slice}')
+                
+                ax[i, 3].imshow(test_img_rotated, cmap='gray')
+                ax[i, 3].imshow(test_prediction_rotated, alpha=0.5)  # Overlay prediction mask
+                ax[i, 3].set_title(f'Overlay - Slice {n_slice}')
+            
+            plt.tight_layout()
             st.pyplot(fig)
             
             # Save the segmentation result
