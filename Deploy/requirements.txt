@@ -1,8 +1,8 @@
-streamlit==1.32.0
-numpy==1.26.0
-nibabel==5.1.0
-tensorflow==2.15.0
-scikit-learn==1.3.2
-matplotlib==3.8.0
-scipy==1.11.3
-gdown==4.7.1
+streamlit
+numpy
+nibabel
+tensorflow
+scikit-learn
+matplotlib
+scipy
+gdown
