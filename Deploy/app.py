@@ -195,7 +195,7 @@ if uploaded_folder is not None:
             
             # Save the segmentation result
             output_file = "segmentation_result.nii.gz"
-            nib.save(nib.Nifti1Image(segmentation_result, np.eye(4)), output_file)
+            nib.save(nib.Nifti1Image(segmentation_result.astype(np.float32), np.eye(4)), output_file)
             
             # Provide a download link for the segmentation result
             with open(output_file, "rb") as f:
