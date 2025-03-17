@@ -57,7 +57,7 @@ def combine_channels(t1n, t1c, t2f, t2w):
 def run_segmentation(model, input_image):
     # Add batch and channel dimensions
     input_image = np.expand_dims(input_image, axis=0)  # Add batch dimension
-    input_image = np.expand_dims(input_image, axis=-1)  # Add channel dimension
+    #input_image = np.expand_dims(input_image, axis=-1)  # Add channel dimension
     
     # Print the shape of input_image for debugging
     st.write(f"Shape of input_image: {input_image.shape}")
