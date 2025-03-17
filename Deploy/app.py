@@ -17,7 +17,7 @@ st.title("Brain Tumor Segmentation using 3D U-Net")
 # Function to download the default model from Google Drive
 def download_default_model():
     # Google Drive file ID for the default model
-    file_id = "YOUR_GOOGLE_DRIVE_FILE_ID"  # Replace with your file ID
+    file_id = "1lV1SgafomQKwgv1NW2cjlpyb4LwZXFwX"  # Replace with your file ID
     output_path = "default_model.keras"
     
     # Download the file if it doesn't already exist
