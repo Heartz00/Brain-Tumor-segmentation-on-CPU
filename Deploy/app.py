@@ -5,8 +5,6 @@ from tensorflow.keras.models import load_model
 from sklearn.preprocessing import MinMaxScaler
 import os
 import matplotlib.pyplot as plt
-from scipy.ndimage import rotate
-from tensorflow.keras.utils import to_categorical
 import gdown  # For downloading files from Google Drive
 import zipfile  # To handle folder uploads
 import tempfile  # To handle temporary files
@@ -52,54 +50,23 @@ def preprocess_nifti(file_path):
 def combine_channels(t1n, t1c, t2f, t2w):
     # Stack the 4 channels along the last axis
     combined_image = np.stack([t1n, t1c, t2f, t2w], axis=3)
-    combined_image = combined_image[56:184, 56:184, 13:141]
     return combined_image
-
-# Function to extract a patch from an image
-def extract_patch(image, patch_size):
-    img_shape = image.shape[:3]  # Exclude the channel dimension
-    patch_x = np.random.randint(0, max(img_shape[0] - patch_size[0], 1))
-    patch_y = np.random.randint(0, max(img_shape[1] - patch_size[1], 1))
-    patch_z = np.random.randint(0, max(img_shape[2] - patch_size[2], 1))
-    
-    return image[patch_x:patch_x + patch_size[0],
-                 patch_y:patch_y + patch_size[1],
-                 patch_z:patch_z + patch_size[2], :]
-
-# Function to augment an image
-def augment_image(image):
-    # Rotation
-    angle = np.random.uniform(-15, 15)
-    image = rotate(image, angle, axes=(0, 1), reshape=False, mode='reflect')
-    
-    # Flipping
-    if np.random.rand() > 0.5:
-        image = np.flip(image, axis=0)
-    if np.random.rand() > 0.5:
-        image = np.flip(image, axis=1)
-    
-    # Brightness Adjustment
-    brightness = np.random.uniform(0.9, 1.1)
-    image = np.clip(image * brightness, 0, 1)
-    
-    # Noise Addition (Gaussian noise)
-    if np.random.rand() > 0.5:
-        noise = np.random.normal(0, 0.02, image.shape)
-        image = np.clip(image + noise, 0, 1)
-    
-    # Gamma Correction
-    if np.random.rand() > 0.5:
-        gamma = np.random.uniform(0.8, 1.2)
-        image = np.clip(image ** gamma, 0, 1)
-    
-    return image
 
 # Function to run segmentation
 def run_segmentation(model, input_image):
     # Add batch and channel dimensions
     input_image = np.expand_dims(input_image, axis=0)  # Add batch dimension
-    #input_image = np.expand_dims(input_image, axis=-1)  # Add channel dimension
+    input_image = np.expand_dims(input_image, axis=-1)  # Add channel dimension
     
+    # Print the shape of input_image for debugging
+    st.write(f"Shape of input_image: {input_image.shape}")
+    
+    # Ensure the input_image has the correct shape
+    if len(input_image.shape) != 5:
+        st.error(f"Unexpected shape for input_image: {input_image.shape}. Expected shape: (batch_size, height, width, depth, channels).")
+        return None
+    
+    # Run prediction
     prediction = model.predict(input_image)
     prediction_argmax = np.argmax(prediction, axis=4)[0, :, :, :]
     return prediction_argmax
@@ -180,10 +147,6 @@ if uploaded_folder is not None:
             if len(combined_image.shape) != 4:
                 st.error(f"Unexpected shape for combined_image: {combined_image.shape}. Expected shape: (height, width, depth, channels).")
             else:
-                # Extract a random patch and augment the image
-                combined_image = extract_patch(combined_image, patch_size=(64, 64, 64))
-                combined_image = augment_image(combined_image)
-                st.write(f"Shape of combined_imag after extraction and augmentatione: {combined_image.shape}")
                 # Run segmentation
                 st.write("Running segmentation...")
                 segmentation_result = run_segmentation(model, combined_image)
@@ -201,19 +164,18 @@ if uploaded_folder is not None:
                     mask_argmax = None
                 
                 # Select slice indices for visualization
-                slice_indices = [75, 90, 100]  # Change slice indices as needed
+                depth = combined_image.shape[2]  # Get the depth dimension of the combined_image
+                slice_indices = [depth // 4, depth // 2, 3 * depth // 4]  # Example: 25%, 50%, 75% of depth
+                
+                # Ensure slice indices are within bounds
+                slice_indices = [min(idx, depth - 1) for idx in slice_indices]
                 
                 # Plotting Results
                 fig, ax = plt.subplots(3, 4, figsize=(18, 12))
                 
                 for i, n_slice in enumerate(slice_indices):
-                    # Ensure the slice index is within the depth dimension
-                    if n_slice >= combined_image.shape[2]:
-                        st.error(f"Slice index {n_slice} is out of bounds for depth dimension (max depth: {combined_image.shape[2]}).")
-                        continue
-                    
                     # Rotate images to correct orientation
-                    test_img_rotated = np.rot90(combined_image[:, :, n_slice, 1])  # Rotating 90 degrees
+                    test_img_rotated = np.rot90(combined_image[:, :, n_slice, 0])  # Rotating 90 degrees
                     test_prediction_rotated = np.rot90(segmentation_result[:, :, n_slice])
                     
                     # Plotting Results
