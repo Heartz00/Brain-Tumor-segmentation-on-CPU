@@ -12,7 +12,7 @@ import zipfile  # To handle folder uploads
 import tempfile  # To handle temporary files
 
 # Title of the app
-st.title("Brain Tumor Segmentation using 3D U-Net")
+st.title("Brain Tumor Segmentation using 3D U-Net (Lightweight Architecture on Normal CPUs)")
 
 # Function to download the default model from Google Drive
 def download_default_model():
