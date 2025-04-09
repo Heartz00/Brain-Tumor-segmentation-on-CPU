@@ -5,9 +5,9 @@ from tensorflow.keras.models import load_model
 from sklearn.preprocessing import MinMaxScaler
 import os
 import matplotlib.pyplot as plt
-import gdown  # For downloading files from Google Drive
-import zipfile  # To handle folder uploads
-import tempfile  # To handle temporary files
+import gdown
+import zipfile
+import tempfile
 from tensorflow.keras.utils import to_categorical
 
 # Title of the app
@@ -15,11 +15,9 @@ st.title("Brain Tumor Segmentation using 3D U-Net - (Lightweight Architecture on
 
 # Function to download the default model from Google Drive
 def download_default_model():
-    # Google Drive file ID for the default model
     file_id = "1lV1SgafomQKwgv1NW2cjlpyb4LwZXFwX"  # Replace with your file ID
     output_path = "default_model.keras"
     
-    # Download the file if it doesn't already exist
     if not os.path.exists(output_path):
         url = f"https://drive.google.com/uc?id={file_id}"
         gdown.download(url, output_path, quiet=False)
@@ -27,9 +25,8 @@ def download_default_model():
     return output_path
 
 # Load the default model
-@st.cache_resource  # Cache the model to avoid reloading on every interaction
+@st.cache_resource
 def load_default_model():
-    # Download the model from Google Drive
     model_path = download_default_model()
     model = load_model(model_path, compile=False)
     return model
@@ -38,179 +35,130 @@ default_model = load_default_model()
 
 # Function to preprocess a NIfTI file
 def preprocess_nifti(file_path):
-    # Load the NIfTI file
     image = nib.load(file_path).get_fdata()
-    
-    # Normalize the image
     scaler = MinMaxScaler()
     image = scaler.fit_transform(image.reshape(-1, image.shape[-1])).reshape(image.shape)
-    
     return image
 
-# Function to combine 4 channels into a single 4-channel numpy array
+# Function to combine and crop 4 channels
 def combine_channels(t1n, t1c, t2f, t2w):
-    # Stack the 4 channels along the last axis
-    combined_image = np.stack([t1n, t1c, t2f, t2w], axis=3)
-    combined_image = combined_image[56:184, 56:184, 13:141]
-    return combined_image
+    combined = np.stack([t1n, t1c, t2f, t2w], axis=-1)  # Shape: (H,W,D,4)
+    cropped = combined[56:184, 56:184, 13:141, :]  # Crop to 128x128x128x4
+    return cropped
 
-# Function to run segmentation
+# Function to run segmentation with proper input shaping
 def run_segmentation(model, input_image):
-    # Add batch and channel dimensions
-    input_image = np.expand_dims(input_image, axis=0)  # Add batch dimension
-    #input_image = np.expand_dims(input_image, axis=-1)  # Add channel dimension
+    # Add batch dimension and ensure correct shape
+    input_image = np.expand_dims(input_image, axis=0)  # Shape: (1,128,128,128,4)
     
-
-    
-    # Ensure the input_image has the correct shape
-    if len(input_image.shape) != 5:
-        st.error(f"Unexpected shape for input_image: {input_image.shape}. Expected shape: (batch_size, height, width, depth, channels).")
+    if input_image.shape != (1,128,128,128,4):
+        st.error(f"Input shape must be (1,128,128,128,4). Got {input_image.shape}")
         return None
     
-    # Run prediction
-    prediction = model.predict(input_image)
-    prediction_argmax = np.argmax(prediction, axis=4)[0, :, :, :]
-    return prediction_argmax
+    try:
+        prediction = model.predict(input_image)
+        return np.argmax(prediction, axis=4)[0]  # Remove batch dim
+    except Exception as e:
+        st.error(f"Prediction failed: {str(e)}")
+        return None
 
 # Sidebar for model upload
 st.sidebar.header("Upload Your Own Model")
 uploaded_model = st.sidebar.file_uploader("Upload a Keras model (.keras)", type=["keras"])
 
-# Load the model (default or uploaded)
-if uploaded_model is not None:
-    # Save the uploaded model temporarily
-    with open("temp_model.keras", "wb") as f:
-        f.write(uploaded_model.getbuffer())
-    
-    # Load the uploaded model
+# Model selection
+model = default_model
+if uploaded_model:
     try:
-        model = load_model("temp_model.keras", compile=False)
-        st.sidebar.success("Custom model loaded successfully!")
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".keras") as tmp:
+            tmp.write(uploaded_model.getbuffer())
+            model = load_model(tmp.name, compile=False)
+        st.sidebar.success("Custom model loaded!")
     except Exception as e:
-        st.sidebar.error(f"Error loading custom model: {e}")
-        st.sidebar.info("Using the default model instead.")
-        model = default_model
-else:
-    model = default_model
-    st.sidebar.info("Using the default model.")
+        st.sidebar.error(f"Invalid model: {str(e)}")
+        st.sidebar.info("Using default model")
 
-# Main app: Upload a folder containing NIfTI files
-st.header("Upload a Folder Containing NIfTI Files")
-uploaded_folder = st.file_uploader("Upload a folder (as a zip file) containing T1n, T1c, T2f, T2w NIfTI files", type=["zip"])
+# Main app
+st.header("Upload MRI Scans (ZIP containing T1n, T1c, T2f, T2w)")
+uploaded_zip = st.file_uploader("Upload scans", type=["zip"])
 
-if uploaded_folder is not None:
-    # Create a temporary directory to extract the zip file
-    with tempfile.TemporaryDirectory() as temp_dir:
-        # Save the uploaded zip file
-        zip_path = os.path.join(temp_dir, "uploaded_folder.zip")
+if uploaded_zip:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Save and extract zip
+        zip_path = os.path.join(tmpdir, "upload.zip")
         with open(zip_path, "wb") as f:
-            f.write(uploaded_folder.getbuffer())
+            f.write(uploaded_zip.getbuffer())
         
-        # Extract the zip file
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(temp_dir)
+        with zipfile.ZipFile(zip_path, 'r') as z:
+            z.extractall(tmpdir)
         
-        # Find the NIfTI files in the extracted folder
-        t1n_path = None
-        t1c_path = None
-        t2f_path = None
-        t2w_path = None
-        mask_path = None
+        # Find required files
+        required = {"t1n": None, "t1c": None, "t2f": None, "t2w": None, "seg": None}
+        for root, _, files in os.walk(tmpdir):
+            for f in files:
+                for k in required:
+                    if k in f.lower() and f.endswith(".nii.gz"):
+                        required[k] = os.path.join(root, f)
         
-        for root, _, files in os.walk(temp_dir):
-            for file in files:
-                if file.endswith("t1n.nii.gz"):
-                    t1n_path = os.path.join(root, file)
-                elif file.endswith("t1c.nii.gz"):
-                    t1c_path = os.path.join(root, file)
-                elif file.endswith("t2f.nii.gz"):
-                    t2f_path = os.path.join(root, file)
-                elif file.endswith("t2w.nii.gz"):
-                    t2w_path = os.path.join(root, file)
-                elif file.endswith("seg.nii.gz"):
-                    mask_path = os.path.join(root, file)
-        
-        # Check if all required files are found
-        if t1n_path and t1c_path and t2f_path and t2w_path:
-            # Preprocess each channel
-            t1n = preprocess_nifti(t1n_path)
-            t1c = preprocess_nifti(t1c_path)
-            t2f = preprocess_nifti(t2f_path)
-            t2w = preprocess_nifti(t2w_path)
+        # Check if all MRI sequences found
+        if not all(required.values()):
+            st.error("Missing files in ZIP. Need: T1n, T1c, T2f, T2w, and seg")
+        else:
+            # Load and preprocess each modality
+            modalities = {}
+            for name, path in required.items():
+                if name != "seg":
+                    modalities[name] = preprocess_nifti(path)
             
-            # Combine the 4 channels
-            combined_image = combine_channels(t1n, t1c, t2f, t2w)
+            # Combine channels
+            combined = combine_channels(
+                modalities["t1n"],
+                modalities["t1c"], 
+                modalities["t2f"],
+                modalities["t2w"]
+            )
             
-            # Print the shape of combined_image for debugging
-            st.write(f"Shape of combined_image: {combined_image.shape}")
+            st.write(f"Input shape: {combined.shape}")
             
-            # Ensure the combined_image has the correct shape
-            if len(combined_image.shape) != 4:
-                st.error(f"Unexpected shape for combined_image: {combined_image.shape}. Expected shape: (height, width, depth, channels).")
-            else:
-                # Run segmentation
-                st.write("Running segmentation...")
-                segmentation_result = run_segmentation(model, combined_image)
-                
-                # Display the segmentation result
-                st.write("Segmentation completed! Displaying results...")
-                
-                # Load the ground truth mask if available
-                if mask_path:
-                    mask = nib.load(mask_path).get_fdata()
-                    mask = mask.astype(np.uint8)
-                    mask[mask == 4] = 3  # Reassign mask values 4 to 3
-                    mask_argmax = np.argmax(to_categorical(mask, num_classes=4), axis=3)
-                else:
-                    mask_argmax = None
-                
-                # Select slice indices for visualization
-                slice_indices = [75, 90, 100]  # Example: 25%, 50%, 75% of depth
-                
+            # Run segmentation
+            seg_result = run_segmentation(model, combined)
             
-                # Plotting Results
-                fig, ax = plt.subplots(3, 4, figsize=(18, 12))
+            if seg_result is not None:
+                # Load ground truth
+                mask = nib.load(required["seg"]).get_fdata()
+                mask = mask[56:184, 56:184, 13:141]  # Crop to match
+                mask[mask == 4] = 3
                 
-                for i, n_slice in enumerate(slice_indices):
-                    # Rotate images to correct orientation
-                    test_img_rotated = np.rot90(combined_image[:, :, n_slice, 0])  # Rotating 90 degrees
-                    test_prediction_rotated = np.rot90(segmentation_result[:, :, n_slice])
+                # Visualization
+                fig, axes = plt.subplots(3, 3, figsize=(15, 10))
+                slices = [40, 64, 90]  # Example slices
+                
+                for i, sl in enumerate(slices):
+                    # Original (T1c)
+                    axes[i,0].imshow(np.rot90(combined[:,:,sl,1]), cmap='gray')
+                    axes[i,0].set_title(f"T1c Slice {sl}")
                     
-                    # Plotting Results
-                    ax[i, 0].imshow(test_img_rotated, cmap='gray')
-                    ax[i, 0].set_title(f'Testing Image - Slice {n_slice}')
+                    # Ground truth
+                    axes[i,1].imshow(np.rot90(mask[:,:,sl]))
+                    axes[i,1].set_title(f"Ground Truth")
                     
-                    if mask_path:
-                        test_mask_rotated = np.rot90(mask_argmax[:, :, n_slice])
-                        ax[i, 1].imshow(test_mask_rotated)
-                        ax[i, 1].set_title(f'Ground Truth - Slice {n_slice}')
-                    else:
-                        ax[i, 1].axis('off')  # Hide the ground truth subplot if no mask is available
-                    
-                    ax[i, 2].imshow(test_prediction_rotated)
-                    ax[i, 2].set_title(f'Prediction - Slice {n_slice}')
-                    
-                    ax[i, 3].imshow(test_img_rotated, cmap='gray')
-                    ax[i, 3].imshow(test_prediction_rotated, alpha=0.5)  # Overlay prediction mask
-                    ax[i, 3].set_title(f'Overlay - Slice {n_slice}')
+                    # Prediction
+                    axes[i,2].imshow(np.rot90(seg_result[:,:,sl]))
+                    axes[i,2].set_title(f"Prediction")
                 
                 plt.tight_layout()
                 st.pyplot(fig)
                 
-                # Save the segmentation result
-                output_file = "segmentation_result.nii.gz"
-                nib.save(nib.Nifti1Image(segmentation_result.astype(np.float32), np.eye(4)), output_file)
+                # Save results
+                output_path = "prediction.nii.gz"
+                nib.save(nib.Nifti1Image(seg_result, np.eye(4)), output_path)
                 
-                # Provide a download link for the segmentation result
-                with open(output_file, "rb") as f:
+                with open(output_path, "rb") as f:
                     st.download_button(
-                        label="Download Segmentation Result",
-                        data=f,
-                        file_name=output_file,
+                        "Download Prediction",
+                        f,
+                        file_name=output_path,
                         mime="application/octet-stream"
                     )
                 
-                # Clean up temporary files
-                os.remove(output_file)
-        else:
-            st.error("The uploaded folder does not contain all required NIfTI files (T1n, T1c, T2f, T2w).")
+                os.remove(output_path)
