@@ -6,12 +6,13 @@ from tensorflow.keras.utils import to_categorical
 import matplotlib.pyplot as plt
 from tifffile import imwrite 
 from sklearn.preprocessing import MinMaxScaler
-
+import os
+import splitfolders
 
 scaler = MinMaxScaler()
 
 # Define the path to your dataset
-TRAIN_DATASET_PATH = '95_Glioma'
+TRAIN_DATASET_PATH = 'BraTS-Africa/95_Glioma'
 
 # Load sample images and visualize
 image_t1n = nib.load(TRAIN_DATASET_PATH + '/BraTS-SSA-00008-000/BraTS-SSA-00008-000-t1n.nii.gz').get_fdata()
@@ -93,6 +94,10 @@ imwrite('combined_image.tif', combined_x)
 np.save('combined_image.npy', combined_x)
 mask = to_categorical(mask, num_classes=4)
 
+
+os.makedirs('glioma/images', exist_ok=True)
+os.makedirs('glioma/masks', exist_ok=True)
+
 # Process all images in the dataset
 t1n_list = sorted(glob.glob(TRAIN_DATASET_PATH + '/*/*t1n.nii.gz'))
 t1c_list = sorted(glob.glob(TRAIN_DATASET_PATH + '/*/*t1c.nii.gz'))
@@ -137,7 +142,8 @@ for img in range(len(t1n_list)):  # Using t1n_list as all lists are of the same 
 
 
 # Split the data into training and validation sets
-import splitfolders
+
+os.makedirs('glioma split data', exist_ok=True)
 
 input_folder = 'glioma/'
 output_folder = 'glioma split data/'
