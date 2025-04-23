@@ -1,3 +1,10 @@
+import numpy as np
+import os
+from scipy.ndimage import rotate
+
+import tensorflow as tf
+
+
 # DICE SCORE CUSTOM FUNCTION 
 class DiceScore(tf.keras.metrics.Metric):
     def __init__(self, num_classes, class_weights=None, smooth=1e-6, **kwargs):
@@ -45,6 +52,14 @@ class DiceScore(tf.keras.metrics.Metric):
 
 
 
+import time
+import segmentation_models_3D as sm
+import numpy as np
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+import os
+import pandas as pd
 
 # MODEL TRAINING 
 import time
