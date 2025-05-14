@@ -75,46 +75,59 @@ def process_uploaded_zip(uploaded_zip):
             with zipfile.ZipFile(zip_path, 'r') as z:
                 z.extractall(tmpdir)
             
-            # Find required files with more flexible matching
+            # Initialize files dictionary
             files = {
                 't1n': None, 't1c': None, 
                 't2f': None, 't2w': None,
                 'seg': None
             }
             
-            # Define possible filename patterns for each modality
+            # Define matching patterns - now specifically looking for your pattern
             patterns = {
-                't1n': ['t1n', 't1_n', 't1-native', 't1.nii'],
-                't1c': ['t1c', 't1_c', 't1-contrast', 't1ce.nii'],
-                't2f': ['t2f', 't2_f', 't2-flair', 'flair.nii'],
-                't2w': ['t2w', 't2_w', 't2-weighted', 't2.nii'],
-                'seg': ['seg', 'label', 'mask', 'groundtruth']
+                't1n': ['-t1n.', '-t1n_', 't1n.nii', 't1_native'],
+                't1c': ['-t1c.', '-t1c_', 't1c.nii', 't1_contrast'],
+                't2f': ['-t2f.', '-t2f_', 't2f.nii', 'flair'],
+                't2w': ['-t2w.', '-t2w_', 't2w.nii', 't2_weighted'],
+                'seg': ['-seg.', '_seg.', 'seg.nii', 'label']
             }
             
+            # First pass: Try to find files with your exact naming pattern
             for root, _, filenames in os.walk(tmpdir):
                 for f in filenames:
+                    f_lower = f.lower()
                     if f.endswith('.nii.gz') or f.endswith('.nii'):
-                        f_lower = f.lower()
-                        # Check each file type
-                        for file_type, pattern_list in patterns.items():
-                            if files[file_type] is None:  # Only find first match
-                                for pattern in pattern_list:
-                                    if pattern in f_lower:
-                                        files[file_type] = os.path.join(root, f)
-                                        break
+                        # Check for your specific pattern (e.g., BraTS-SSA-00007-000-t1c.nii.gz)
+                        if 'brats' in f_lower:
+                            if '-t1n' in f_lower: files['t1n'] = os.path.join(root, f)
+                            elif '-t1c' in f_lower: files['t1c'] = os.path.join(root, f)
+                            elif '-t2f' in f_lower: files['t2f'] = os.path.join(root, f)
+                            elif '-t2w' in f_lower: files['t2w'] = os.path.join(root, f)
+                            elif '-seg' in f_lower: files['seg'] = os.path.join(root, f)
             
-            # Verify we found all required files except seg (which is optional)
+            # Second pass: If any files still missing, try more generic patterns
+            if None in [files['t1n'], files['t1c'], files['t2f'], files['t2w']]:
+                for root, _, filenames in os.walk(tmpdir):
+                    for f in filenames:
+                        if f.endswith('.nii.gz') or f.endswith('.nii'):
+                            f_lower = f.lower()
+                            for file_type, pattern_list in patterns.items():
+                                if files[file_type] is None:
+                                    for pattern in pattern_list:
+                                        if pattern in f_lower:
+                                            files[file_type] = os.path.join(root, f)
+                                            break
+            
+            # Verify we found all required files (seg is optional)
             required_files = ['t1n', 't1c', 't2f', 't2w']
             missing = [ft for ft in required_files if files[ft] is None]
             
             if missing:
                 st.error(f"Missing required scan files: {', '.join(missing)}")
-                st.info("Expected files should contain these keywords in their names:")
-                st.info("T1n: 't1n', 't1_n', 't1-native'")
-                st.info("T1c: 't1c', 't1_c', 't1-contrast'")
-                st.info("T2f: 't2f', 't2_f', 't2-flair'")
-                st.info("T2w: 't2w', 't2_w', 't2-weighted'")
-                st.info("Segmentation (optional): 'seg', 'label', 'mask'")
+                st.info("Detected files in ZIP:")
+                for root, _, filenames in os.walk(tmpdir):
+                    for f in filenames:
+                        if f.endswith('.nii.gz') or f.endswith('.nii'):
+                            st.info(f"- {f}")
                 return None
             
             return files
