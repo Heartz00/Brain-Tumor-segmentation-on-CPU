@@ -82,64 +82,64 @@ def process_uploaded_zip(uploaded_zip):
                 'seg': None
             }
             
-            # Define matching patterns with priority order
+            # Define the specific patterns in your filenames
             patterns = {
-                't1n': ['t1n', 't1_n', 't1-native', 't1.nii'],
-                't1c': ['t1c', 't1_c', 't1-contrast', 't1ce.nii'],
-                't2f': ['t2f', 't2_f', 't2-flair', 'flair.nii'],
-                't2w': ['t2w', 't2_w', 't2-weighted', 't2.nii'],
-                'seg': ['seg', 'label', 'mask', 'groundtruth']
+                't1n': ['-t1n.'],
+                't1c': ['-t1c.'],
+                't2f': ['-t2f.'],
+                't2w': ['-t2w.'],
+                'seg': ['-seg.']
             }
-
-            # First collect all NIfTI files
-            nifti_files = []
-            for root, _, filenames in os.walk(tmpdir):
+            
+            # First, check if we have the exact structure you showed
+            base_path = tmpdir
+            possible_paths = [
+                os.path.join(tmpdir, "data_for test", "data_for test"),  # Your exact structure
+                os.path.join(tmpdir, "data_for test"),                   # If single nested
+                tmpdir                                                   # If files are at root
+            ]
+            
+            # Find the right base path
+            for path in possible_paths:
+                if os.path.exists(path):
+                    base_path = path
+                    break
+            
+            # Now search for files
+            for root, _, filenames in os.walk(base_path):
                 for f in filenames:
-                    if f.lower().endswith(('.nii.gz', '.nii')):
-                        nifti_files.append((root, f.lower(), f))  # (path, lowercase_name, original_name)
-
-            # Then try to match them
-            for root, f_lower, original_name in nifti_files:
-                for file_type, pattern_list in patterns.items():
-                    if files[file_type] is None:
-                        for pattern in pattern_list:
-                            if pattern in f_lower:
-                                files[file_type] = os.path.join(root, original_name)
-                                break
+                    f_lower = f.lower()
+                    if f.endswith('.nii.gz') or f.endswith('.nii'):
+                        # Check for your exact pattern
+                        if '-t1n.' in f_lower: files['t1n'] = os.path.join(root, f)
+                        elif '-t1c.' in f_lower: files['t1c'] = os.path.join(root, f)
+                        elif '-t2f.' in f_lower: files['t2f'] = os.path.join(root, f)
+                        elif '-t2w.' in f_lower: files['t2w'] = os.path.join(root, f)
+                        elif '-seg.' in f_lower: files['seg'] = os.path.join(root, f)
+            
+            # Debug output - show what we found
+            st.info("Files detected:")
+            for file_type, path in files.items():
+                if path:
+                    st.info(f"{file_type.upper()}: {os.path.basename(path)}")
+                else:
+                    st.warning(f"{file_type.upper()}: Not found")
             
             # Verify we found all required files
             required_files = ['t1n', 't1c', 't2f', 't2w']
             missing = [ft for ft in required_files if files[ft] is None]
             
             if missing:
-                st.error(f"❌ Missing required scan files: {', '.join(missing)}")
+                st.error(f"Missing required scan files: {', '.join(missing)}")
                 
-                # Show detailed help
-                st.markdown("### Required files should match these patterns:")
-                cols = st.columns(4)
-                with cols[0]:
-                    st.markdown("**T1 Native**\n- t1n\n- t1_n\n- t1-native")
-                with cols[1]:
-                    st.markdown("**T1 Contrast**\n- t1c\n- t1_c\n- t1-contrast")
-                with cols[2]:
-                    st.markdown("**T2 Flair**\n- t2f\n- t2_f\n- t2-flair")
-                with cols[3]:
-                    st.markdown("**T2 Weighted**\n- t2w\n- t2_w\n- t2-weighted")
-                
-                st.markdown("### Files found in your ZIP:")
-                if nifti_files:
-                    for root, _, original_name in nifti_files:
-                        st.info(f"- {os.path.join(root, original_name)}")
-                else:
-                    st.warning("No NIfTI files (.nii or .nii.gz) found in the ZIP")
-                
-                st.markdown("### Troubleshooting tips:")
-                st.markdown("""
-                1. Ensure your ZIP contains all 4 required scan types
-                2. Check filenames contain the correct keywords
-                3. Verify files are in .nii or .nii.gz format
-                4. Try re-zipping your files directly (not the folder)
-                """)
+                # Show directory structure for debugging
+                st.info("Directory structure in ZIP:")
+                for root, dirs, files_in_dir in os.walk(base_path):
+                    level = root.replace(base_path, '').count(os.sep)
+                    indent = ' ' * 4 * level
+                    st.info(f"{indent}{os.path.basename(root)}/")
+                    for f in files_in_dir:
+                        st.info(f"{indent}    {f}")
                 
                 return None
             
