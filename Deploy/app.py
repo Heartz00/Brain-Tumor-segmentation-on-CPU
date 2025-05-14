@@ -75,11 +75,11 @@ def process_uploaded_zip(uploaded_zip):
             with zipfile.ZipFile(zip_path, 'r') as z:
                 z.extractall(tmpdir)
             
-            # Initialize files dictionary
+            # Initialize files dictionary (SEG is optional)
             files = {
                 't1n': None, 't1c': None, 
                 't2f': None, 't2w': None,
-                'seg': None
+                'seg': None  # This remains optional
             }
             
             # Define the specific patterns in your filenames
@@ -88,51 +88,47 @@ def process_uploaded_zip(uploaded_zip):
                 't1c': ['-t1c.'],
                 't2f': ['-t2f.'],
                 't2w': ['-t2w.'],
-                'seg': ['-seg.']
+                'seg': ['-seg.']  # Still included but not required
             }
             
-            # First, check if we have the exact structure you showed
+            # Find the right base path (handles nested folders)
             base_path = tmpdir
             possible_paths = [
-                os.path.join(tmpdir, "data_for test", "data_for test"),  # Your exact structure
-                os.path.join(tmpdir, "data_for test"),                   # If single nested
-                tmpdir                                                   # If files are at root
+                os.path.join(tmpdir, "data_for test", "data_for test"),
+                os.path.join(tmpdir, "data_for test"),
+                tmpdir
             ]
             
-            # Find the right base path
             for path in possible_paths:
                 if os.path.exists(path):
                     base_path = path
                     break
             
-            # Now search for files
+            # Search for files
             for root, _, filenames in os.walk(base_path):
                 for f in filenames:
                     f_lower = f.lower()
                     if f.endswith('.nii.gz') or f.endswith('.nii'):
-                        # Check for your exact pattern
                         if '-t1n.' in f_lower: files['t1n'] = os.path.join(root, f)
                         elif '-t1c.' in f_lower: files['t1c'] = os.path.join(root, f)
                         elif '-t2f.' in f_lower: files['t2f'] = os.path.join(root, f)
                         elif '-t2w.' in f_lower: files['t2w'] = os.path.join(root, f)
                         elif '-seg.' in f_lower: files['seg'] = os.path.join(root, f)
             
-            # Debug output - show what we found
-            st.info("Files detected:")
-            for file_type, path in files.items():
-                if path:
-                    st.info(f"{file_type.upper()}: {os.path.basename(path)}")
-                else:
-                    st.warning(f"{file_type.upper()}: Not found")
+            # Debug output
+            st.success("Detected scan files:")
+            cols = st.columns(4)
+            with cols[0]: st.info(f"T1N: {os.path.basename(files['t1n']) if files['t1n'] else '❌ Not found'}")
+            with cols[1]: st.info(f"T1C: {os.path.basename(files['t1c']) if files['t1c'] else '❌ Not found'}")
+            with cols[2]: st.info(f"T2F: {os.path.basename(files['t2f']) if files['t2f'] else '❌ Not found'}")
+            with cols[3]: st.info(f"T2W: {os.path.basename(files['t2w']) if files['t2w'] else '❌ Not found'}")
             
-            # Verify we found all required files
+            # Only these 4 files are required
             required_files = ['t1n', 't1c', 't2f', 't2w']
             missing = [ft for ft in required_files if files[ft] is None]
             
             if missing:
-                st.error(f"Missing required scan files: {', '.join(missing)}")
-                
-                # Show directory structure for debugging
+                st.error(f"❌ Missing required scan files: {', '.join(missing)}")
                 st.info("Directory structure in ZIP:")
                 for root, dirs, files_in_dir in os.walk(base_path):
                     level = root.replace(base_path, '').count(os.sep)
@@ -140,7 +136,6 @@ def process_uploaded_zip(uploaded_zip):
                     st.info(f"{indent}{os.path.basename(root)}/")
                     for f in files_in_dir:
                         st.info(f"{indent}    {f}")
-                
                 return None
             
             return files
