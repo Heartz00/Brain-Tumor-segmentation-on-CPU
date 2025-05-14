@@ -28,7 +28,7 @@ def load_default_model():
         # Download model if it doesn't exist
         if not os.path.exists("default_model.keras"):
             # Google Drive example (replace with your link)
-            url = "url = "https://drive.google.com/uc?id=1lV1SgafomQKwgv1NW2cjlpyb4LwZXFwX"
+           url = "https://drive.google.com/uc?id=1lV1SgafomQKwgv1NW2cjlpyb4LwZXFwX"
             gdown.download(url, "default_model.keras", quiet=False)
         
         return load_model("default_model.keras", compile=False)
