@@ -186,9 +186,9 @@ def show_results(input_vol, prediction, ground_truth=None):
 
 # Main app flow
 def main():
-    global model  # Allow model to be updated
+    global model
     
-    # Model upload section
+    # Model upload section (keep this unchanged)
     with st.sidebar:
         st.header("Model Configuration")
         uploaded_model = st.file_uploader("Upload custom model (.keras)", type=['keras'])
@@ -201,31 +201,18 @@ def main():
                 
                 try:
                     new_model = load_model(tmp_path, compile=False)
-                    model = new_model  # Update the global model
+                    model = new_model
                     st.success("Custom model loaded successfully!")
                 finally:
                     if os.path.exists(tmp_path):
                         os.remove(tmp_path)
-                        
             except Exception as e:
                 st.error(f"Failed to load custom model: {str(e)}")
                 st.info("Reverting to default model")
                 model = load_default_model()
     
-    # Main processing section
-    st.header("MRI Volume Upload")
-    st.markdown("""
-### Expected file naming:
-- **T1 Native**: `...t1n...`, `...t1_n...`, or `...t1-native...`
-- **T1 Contrast**: `...t1c...`, `...t1_c...`, or `...t1-contrast...`
-- **T2 Flair**: `...t2f...`, `...t2_f...`, or `...t2-flair...`
-- **T2 Weighted**: `...t2w...`, `...t2_w...`, or `...t2-weighted...`
-- **Segmentation** (optional): `...seg...`, `...label...`, or `...mask...`
-
-Example valid names:  
-`BraTS-001-t1n.nii.gz`, `patient1_t1c.nii`, `case5_T2_FLAIR.nii.gz`
-""")
-
+    # Main processing section - THIS IS THE FIXED PART
+    st.header("BRAIN TUMOR SEGMENTATION WITH 3D UNET")
     uploaded_zip = st.file_uploader("Upload MRI scans (ZIP containing T1n, T1c, T2f, T2w)", type=['zip'])
     
     if uploaded_zip:
@@ -236,11 +223,13 @@ Example valid names:
         with st.spinner("Processing scans..."):
             files = process_uploaded_zip(uploaded_zip)
             
-            if files is None or None in files.values():
+            # Updated check - only validates required files (excluding SEG)
+            required_files = ['t1n', 't1c', 't2f', 't2w']
+            if files is None or any(files[ft] is None for ft in required_files):
                 st.error("Missing required scan files in the uploaded ZIP")
                 return
             
-            # Load and preprocess each modality
+            # Rest of your processing code remains unchanged...
             modalities = {}
             for name, path in files.items():
                 if name != 'seg':
@@ -248,7 +237,6 @@ Example valid names:
                     if modalities[name] is None:
                         return
             
-            # Combine and crop channels
             combined = np.stack([
                 modalities['t1n'],
                 modalities['t1c'],
@@ -256,7 +244,6 @@ Example valid names:
                 modalities['t2w']
             ], axis=-1)
             
-            # Crop to target size
             combined = combined[
                 CROP_PARAMS[0][0]:CROP_PARAMS[0][1],
                 CROP_PARAMS[1][0]:CROP_PARAMS[1][1],
@@ -264,25 +251,26 @@ Example valid names:
                 :
             ]
             
-            # Load ground truth if available
+            # Optional ground truth handling
             gt = None
-            if files['seg']:
-                gt = nib.load(files['seg']).get_fdata()
-                gt = gt[
-                    CROP_PARAMS[0][0]:CROP_PARAMS[0][1],
-                    CROP_PARAMS[1][0]:CROP_PARAMS[1][1],
-                    CROP_PARAMS[2][0]:CROP_PARAMS[2][1]
-                ]
-                gt[gt == 4] = 3  # Relabel tumor classes
+            if files['seg']:  # This is now safely optional
+                try:
+                    gt = nib.load(files['seg']).get_fdata()
+                    gt = gt[
+                        CROP_PARAMS[0][0]:CROP_PARAMS[0][1],
+                        CROP_PARAMS[1][0]:CROP_PARAMS[1][1],
+                        CROP_PARAMS[2][0]:CROP_PARAMS[2][1]
+                    ]
+                    gt[gt == 4] = 3
+                except:
+                    st.warning("Could not load segmentation file (optional)")
             
-            # Run prediction
             prediction = predict_volume(model, combined)
             
             if prediction is not None:
                 st.success("Segmentation complete!")
                 show_results(combined, prediction, gt)
                 
-                # Save results
                 output_path = "segmentation_result.nii.gz"
                 nib.save(
                     nib.Nifti1Image(
@@ -302,7 +290,6 @@ Example valid names:
                 
                 if os.path.exists(output_path):
                     os.remove(output_path)
-
 if __name__ == "__main__":
     if model is None:
         st.error("Failed to load model. Please check your internet connection and try again.")
