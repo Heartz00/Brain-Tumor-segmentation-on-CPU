@@ -1,9 +1,9 @@
 streamlit
-numpy
 nibabel
-tensorflow
+numpy
 scikit-learn
+tensorflow
 matplotlib
-scipy
 gdown
-requests
+scipy
+plotly
