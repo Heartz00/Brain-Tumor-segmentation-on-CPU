@@ -72,59 +72,51 @@ def process_uploaded_zip(uploaded_zip):
             with open(zip_path, "wb") as f:
                 f.write(uploaded_zip.getbuffer())
             
-            # Extract while preserving full paths
+            # Extract all files to a flat structure
+            extracted_files = {}
             with zipfile.ZipFile(zip_path, 'r') as z:
-                # First get all file paths in the zip
-                all_files = z.namelist()
-                
-                # Find the actual NIfTI files
-                nifti_files = [f for f in all_files if f.lower().endswith(('.nii.gz', '.nii'))]
-                
-                # Extract only the NIfTI files to avoid nested folders
-                for file_in_zip in nifti_files:
-                    # Extract to the root of tmpdir
-                    z.extract(file_in_zip, tmpdir)
+                for file_info in z.infolist():
+                    # Skip directories
+                    if file_info.is_dir():
+                        continue
                     
-                    # Get the filename without path
-                    filename = os.path.basename(file_in_zip)
+                    # Get just the filename (no path)
+                    filename = os.path.basename(file_info.filename)
+                    if not filename.lower().endswith(('.nii.gz', '.nii')):
+                        continue
                     
-                    # If it was in a subfolder, move it to tmpdir root
-                    if file_in_zip != filename:
-                        os.rename(os.path.join(tmpdir, file_in_zip), 
-                                 os.path.join(tmpdir, filename))
+                    # Extract to temp dir
+                    extracted_path = os.path.join(tmpdir, filename)
+                    with open(extracted_path, 'wb') as f:
+                        f.write(z.read(file_info.filename))
+                    extracted_files[filename.lower()] = extracted_path
             
-            # Now look for files directly in tmpdir
+            # Map files to types
             files = {
                 't1n': None, 't1c': None, 
                 't2f': None, 't2w': None,
                 'seg': None
             }
             
-            # Search through files in tmpdir (no recursion needed)
-            for f in os.listdir(tmpdir):
-                if f.lower().endswith(('.nii.gz', '.nii')):
-                    full_path = os.path.join(tmpdir, f)
-                    f_lower = f.lower()
-                    
-                    if '-t1n.' in f_lower: files['t1n'] = full_path
-                    elif '-t1c.' in f_lower: files['t1c'] = full_path
-                    elif '-t2f.' in f_lower: files['t2f'] = full_path
-                    elif '-t2w.' in f_lower: files['t2w'] = full_path
-                    elif '-seg.' in f_lower: files['seg'] = full_path
+            # Match files to types
+            for filename, path in extracted_files.items():
+                if '-t1n.' in filename: files['t1n'] = path
+                elif '-t1c.' in filename: files['t1c'] = path
+                elif '-t2f.' in filename: files['t2f'] = path
+                elif '-t2w.' in filename: files['t2w'] = path
+                elif '-seg.' in filename: files['seg'] = path
             
-            # Verify files exist and are accessible
+            # Debug output
+            st.info("Extracted files:")
+            for filename, path in extracted_files.items():
+                st.info(f"- {filename} -> {path} (exists: {os.path.exists(path)})")
+            
+            # Verify required files
             required_files = ['t1n', 't1c', 't2f', 't2w']
             for file_type in required_files:
-                if files[file_type]:
-                    if not os.path.exists(files[file_type]):
-                        st.error(f"File {files[file_type]} doesn't exist after extraction")
-                        return None
-                    try:
-                        with open(files[file_type], 'rb') as test_file:
-                            pass
-                    except IOError:
-                        st.error(f"Couldn't access {files[file_type]}")
-                        return None
+                if not files[file_type] or not os.path.exists(files[file_type]):
+                    st.error(f"Missing or inaccessible {file_type.upper()} file")
+                    return None
             
             return files
             
