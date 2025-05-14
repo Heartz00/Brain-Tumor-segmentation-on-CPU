@@ -22,17 +22,17 @@ CROP_PARAMS = ((56, 184), (56, 184), (13, 141))  # y, x, z cropping
 @st.cache_resource
 def load_default_model():
     try:
-        # Download model if it doesn't exist
+        # Download from Google Drive if not found
         if not os.path.exists("default_model.keras"):
-            # Google Drive example (replace with your link)
-           url = "https://drive.google.com/uc?id=1lV1SgafomQKwgv1NW2cjlpyb4LwZXFwX"
-           gdown.download(url, "default_model.keras", quiet=False)
-        
-        return load_model("default_model.keras", compile=False)
+            url = "https://drive.google.com/uc?id=1lV1SgafomQKwgv1NW2cjlpyb4LwZXFwX"
+            gdown.download(url, "default_model.keras", quiet=False)
+            
+        model = load_model('default_model.keras', compile=False)
+        st.success("Model loaded successfully!")
+        return model
     except Exception as e:
-        st.error(f"Failed to load default model: {str(e)}")
-        return None
-        
+        st.error(f"Model loading failed: {str(e)}")
+        st.stop()  # This stops the app completely
 
 model = load_default_model()
 
