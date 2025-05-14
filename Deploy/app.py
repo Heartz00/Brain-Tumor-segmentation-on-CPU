@@ -7,7 +7,6 @@ import tempfile
 from tensorflow.keras.models import load_model
 from matplotlib import pyplot as plt
 import time
-import requests
 import gdown
 from pathlib import Path
 
@@ -21,6 +20,9 @@ scaler = MinMaxScaler()
 MODEL_URL = "https://drive.google.com/uc?id=1lV1SgafomQKwgv1NW2cjlpyb4LwZXFwX"
 MODEL_DIR = "saved_model"
 MODEL_PATH = os.path.join(MODEL_DIR, "3D_unet_100_epochs_2_batch_patch_training.keras")
+
+# Model expects (64, 64, 64, 4) input
+TARGET_SHAPE = (64, 64, 64, 4)
 
 # Ensure model directory exists
 os.makedirs(MODEL_DIR, exist_ok=True)
@@ -106,10 +108,14 @@ def prepare_input(modalities):
         modalities['t2w']
     ], axis=3)
     
-    # Crop to expected size (128, 128, 128, 4)
+    # First crop to original expected size (128, 128, 128, 4)
     combined = combined[56:184, 56:184, 13:141, :]
     
-    return combined
+    # Then resize to model's expected input shape (64, 64, 64, 4)
+    # Using simple downsampling for CPU compatibility
+    downsampled = combined[::2, ::2, ::2, :]
+    
+    return downsampled, combined  # Return both downsampled and original
 
 # Function to make prediction
 def make_prediction(model, input_data):
@@ -122,10 +128,21 @@ def make_prediction(model, input_data):
     
     return prediction_argmax
 
+# Function to upsample prediction to original size
+def upsample_prediction(prediction, target_shape):
+    # Simple nearest-neighbor upsampling for CPU compatibility
+    from scipy.ndimage import zoom
+    zoom_factors = (
+        target_shape[0] / prediction.shape[0],
+        target_shape[1] / prediction.shape[1],
+        target_shape[2] / prediction.shape[2]
+    )
+    return zoom(prediction, zoom_factors, order=0)  # order=0 for nearest-neighbor
+
 # Function to visualize results
-def visualize_results(input_data, prediction, ground_truth=None):
+def visualize_results(input_data, prediction, original_shape_data=None, ground_truth=None):
     # Select a modality to display (using T1c here)
-    image_data = input_data[:, :, :, 1]  # T1c is the second channel
+    image_data = original_shape_data[:, :, :, 1] if original_shape_data is not None else input_data[:, :, :, 1]
     
     # Select some slices to display
     slice_indices = [30, 50, 70]
@@ -171,7 +188,9 @@ def main():
         3. Click 'Process and Predict' button
         4. View the segmentation results
         
-        **Note:** The first run will download the model (~100MB) which may take a few minutes.
+        **Note:** 
+        - The first run will download the model (~100MB) which may take a few minutes.
+        - This version runs on CPU and may be slower than GPU-accelerated versions.
         """)
     
     # Load model (this will trigger download if needed)
@@ -194,8 +213,8 @@ def main():
                 # Process uploaded files
                 modalities = process_uploaded_files(uploaded_files)
                 
-                # Prepare input
-                input_data = prepare_input(modalities)
+                # Prepare input (returns both downsampled and original)
+                input_data, original_shape_data = prepare_input(modalities)
                 
                 if input_data is None:
                     st.error("Could not prepare input data. Please ensure you've uploaded all required modalities.")
@@ -208,15 +227,19 @@ def main():
                     ground_truth[ground_truth == 4] = 3  # Reassign label 4 to 3
                 
                 # Make prediction
-                with st.spinner("Making prediction..."):
+                with st.spinner("Making prediction (this may take a few minutes on CPU)..."):
                     start_time = time.time()
                     prediction = make_prediction(model, input_data)
+                    
+                    # Upsample prediction to original size
+                    prediction = upsample_prediction(prediction, original_shape_data.shape[:3])
+                    
                     elapsed_time = time.time() - start_time
                 
                 st.success(f"Prediction completed in {elapsed_time:.2f} seconds")
                 
-                # Visualize results
-                fig = visualize_results(input_data, prediction, ground_truth)
+                # Visualize results using original size data
+                fig = visualize_results(input_data, prediction, original_shape_data, ground_truth)
                 st.pyplot(fig)
                 
                 # Provide download option for prediction
