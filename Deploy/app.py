@@ -82,31 +82,40 @@ def process_uploaded_zip(uploaded_zip):
                 'seg': None
             }
             
-            # Search through all files in the extracted directory
+            # Search through all extracted files
             for root, _, filenames in os.walk(tmpdir):
                 for f in filenames:
                     f_lower = f.lower()
-                    if f.lower().endswith(('.nii.gz', '.nii')):
+                    if f.endswith('.nii.gz') or f.endswith('.nii'):
                         full_path = os.path.join(root, f)
-                        # Check for your specific pattern
-                        if '-t1n.' in f_lower: files['t1n'] = full_path
-                        elif '-t1c.' in f_lower: files['t1c'] = full_path
-                        elif '-t2f.' in f_lower: files['t2f'] = full_path
-                        elif '-t2w.' in f_lower: files['t2w'] = full_path
-                        elif '-seg.' in f_lower: files['seg'] = full_path
+                        # Verify file actually exists before assigning
+                        if os.path.exists(full_path):
+                            if '-t1n.' in f_lower: files['t1n'] = full_path
+                            elif '-t1c.' in f_lower: files['t1c'] = full_path
+                            elif '-t2f.' in f_lower: files['t2f'] = full_path
+                            elif '-t2w.' in f_lower: files['t2w'] = full_path
+                            elif '-seg.' in f_lower: files['seg'] = full_path
             
-            # Verify paths exist
+            # Debug output
+            st.success("Files found:")
             for file_type, path in files.items():
-                if path and not os.path.exists(path):
-                    st.error(f"File found but cannot be accessed: {path}")
-                    return None
+                if path:
+                    st.info(f"{file_type.upper()}: {path}")
+                else:
+                    if file_type != 'seg':  # seg is optional
+                        st.warning(f"{file_type.upper()}: Not found")
             
-            # Verify we found all required files (excluding seg)
+            # Verify required files
             required_files = ['t1n', 't1c', 't2f', 't2w']
-            missing = [ft for ft in required_files if files[ft] is None]
+            missing = [ft for ft in required_files if not files[ft] or not os.path.exists(files[ft])]
             
             if missing:
-                st.error(f"Missing required scan files: {', '.join(missing)}")
+                st.error(f"Missing or inaccessible files: {', '.join(missing)}")
+                st.info("Full directory structure:")
+                for root, dirs, files_in_dir in os.walk(tmpdir):
+                    st.info(f"Directory: {root}")
+                    for f in files_in_dir:
+                        st.info(f" - {f}")
                 return None
             
             return files
@@ -205,10 +214,15 @@ def main():
             
             # Rest of your processing code remains unchanged...
             modalities = {}
+            
             for name, path in files.items():
-                if name != 'seg':
-                    modalities[name] = load_and_preprocess_nifti(path)
-                    if modalities[name] is None:
+                if name != 'seg' and path:  # Only process if path exists
+                    try:
+                        modalities[name] = load_and_preprocess_nifti(path)
+                        if modalities[name] is None:
+                            return
+                    except Exception as e:
+                        st.error(f"Failed to load {name} from {path}: {str(e)}")
                         return
             
             combined = np.stack([
