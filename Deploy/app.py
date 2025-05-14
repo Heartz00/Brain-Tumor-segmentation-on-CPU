@@ -9,7 +9,7 @@ import zipfile
 import tempfile
 from tensorflow.keras.utils import to_categorical
 import gdown
-import os
+import requests
 
 # Configure app
 st.set_page_config(layout="wide")
@@ -22,18 +22,36 @@ CROP_PARAMS = ((56, 184), (56, 184), (13, 141))  # y, x, z cropping
 @st.cache_resource
 def load_default_model():
     try:
-        # Download from Google Drive if not found
-        if not os.path.exists("default_model.keras"):
-            url = "https://drive.google.com/uc?id=1lV1SgafomQKwgv1NW2cjlpyb4LwZXFwX"
-            gdown.download(url, "default_model.keras", quiet=False)
+        MODEL_PATH = "default_model.keras"
+        MODEL_URL = "https://drive.google.com/uc?id=1lV1SgafomQKwgv1NW2cjlpyb4LwZXFwX"
+        
+        # Download model if it doesn't exist
+        if not os.path.exists(MODEL_PATH):
+            with st.spinner("Downloading model (65MB)... This may take a minute..."):
+                gdown.download(MODEL_URL, MODEL_PATH, quiet=True)
+                
+                # Verify download completed
+                if not os.path.exists(MODEL_PATH):
+                    st.error("Model download failed. Please check your internet connection.")
+                    return None
+        
+        # Load the model with custom objects if needed
+        try:
+            model = load_model(MODEL_PATH, compile=False)
+            st.success("Model loaded successfully!")
+            return model
+        except Exception as load_error:
+            st.error(f"Model loading failed: {str(load_error)}")
+            # Try to clean up corrupted download
+            if os.path.exists(MODEL_PATH):
+                os.remove(MODEL_PATH)
+            return None
             
-        model = load_model('default_model.keras', compile=False)
-        st.success("Model loaded successfully!")
-        return model
     except Exception as e:
-        st.error(f"Model loading failed: {str(e)}")
-        st.stop()  # This stops the app completely
+        st.error(f"Failed to initialize model: {str(e)}")
+        return None
 
+# Initialize model at the start
 model = load_default_model()
 
 # File processing functions
@@ -47,33 +65,37 @@ def load_and_preprocess_nifti(filepath):
         return None
 
 def process_uploaded_zip(uploaded_zip):
-    with tempfile.TemporaryDirectory() as tmpdir:
-        # Save and extract zip
-        zip_path = os.path.join(tmpdir, "upload.zip")
-        with open(zip_path, "wb") as f:
-            f.write(uploaded_zip.getbuffer())
-        
-        with zipfile.ZipFile(zip_path, 'r') as z:
-            z.extractall(tmpdir)
-        
-        # Find required files
-        files = {
-            't1n': None, 't1c': None, 
-            't2f': None, 't2w': None,
-            'seg': None
-        }
-        
-        for root, _, filenames in os.walk(tmpdir):
-            for f in filenames:
-                f_lower = f.lower()
-                if f.endswith('.nii.gz'):
-                    if 't1n' in f_lower: files['t1n'] = os.path.join(root, f)
-                    elif 't1c' in f_lower: files['t1c'] = os.path.join(root, f)
-                    elif 't2f' in f_lower: files['t2f'] = os.path.join(root, f)
-                    elif 't2w' in f_lower: files['t2w'] = os.path.join(root, f)
-                    elif 'seg' in f_lower: files['seg'] = os.path.join(root, f)
-        
-        return files
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Save and extract zip
+            zip_path = os.path.join(tmpdir, "upload.zip")
+            with open(zip_path, "wb") as f:
+                f.write(uploaded_zip.getbuffer())
+            
+            with zipfile.ZipFile(zip_path, 'r') as z:
+                z.extractall(tmpdir)
+            
+            # Find required files
+            files = {
+                't1n': None, 't1c': None, 
+                't2f': None, 't2w': None,
+                'seg': None
+            }
+            
+            for root, _, filenames in os.walk(tmpdir):
+                for f in filenames:
+                    f_lower = f.lower()
+                    if f.endswith('.nii.gz'):
+                        if 't1n' in f_lower: files['t1n'] = os.path.join(root, f)
+                        elif 't1c' in f_lower: files['t1c'] = os.path.join(root, f)
+                        elif 't2f' in f_lower: files['t2f'] = os.path.join(root, f)
+                        elif 't2w' in f_lower: files['t2w'] = os.path.join(root, f)
+                        elif 'seg' in f_lower: files['seg'] = os.path.join(root, f)
+            
+            return files
+    except Exception as e:
+        st.error(f"Error processing ZIP file: {str(e)}")
+        return None
 
 # Model prediction
 def predict_volume(model, volume):
@@ -118,6 +140,8 @@ def show_results(input_vol, prediction, ground_truth=None):
 
 # Main app flow
 def main():
+    global model  # Allow model to be updated
+    
     # Model upload section
     with st.sidebar:
         st.header("Model Configuration")
@@ -127,8 +151,16 @@ def main():
             try:
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.keras') as tmp:
                     tmp.write(uploaded_model.getbuffer())
-                    model = load_model(tmp.name, compile=False)
-                st.success("Custom model loaded successfully!")
+                    tmp_path = tmp.name
+                
+                try:
+                    new_model = load_model(tmp_path, compile=False)
+                    model = new_model  # Update the global model
+                    st.success("Custom model loaded successfully!")
+                finally:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                        
             except Exception as e:
                 st.error(f"Failed to load custom model: {str(e)}")
                 st.info("Reverting to default model")
@@ -138,11 +170,15 @@ def main():
     st.header("MRI Volume Upload")
     uploaded_zip = st.file_uploader("Upload MRI scans (ZIP containing T1n, T1c, T2f, T2w)", type=['zip'])
     
-    if uploaded_zip and model:
+    if uploaded_zip:
+        if model is None:
+            st.error("No model available for prediction. Please try refreshing the page.")
+            return
+            
         with st.spinner("Processing scans..."):
             files = process_uploaded_zip(uploaded_zip)
             
-            if None in files.values():
+            if files is None or None in files.values():
                 st.error("Missing required scan files in the uploaded ZIP")
                 return
             
@@ -206,10 +242,11 @@ def main():
                         mime="application/octet-stream"
                     )
                 
-                os.remove(output_path)
+                if os.path.exists(output_path):
+                    os.remove(output_path)
 
 if __name__ == "__main__":
     if model is None:
-        st.error("Failed to load model. Cannot proceed.")
+        st.error("Failed to load model. Please check your internet connection and try again.")
     else:
         main()
