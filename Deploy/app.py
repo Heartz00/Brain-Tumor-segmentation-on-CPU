@@ -75,22 +75,47 @@ def process_uploaded_zip(uploaded_zip):
             with zipfile.ZipFile(zip_path, 'r') as z:
                 z.extractall(tmpdir)
             
-            # Find required files
+            # Find required files with more flexible matching
             files = {
                 't1n': None, 't1c': None, 
                 't2f': None, 't2w': None,
                 'seg': None
             }
             
+            # Define possible filename patterns for each modality
+            patterns = {
+                't1n': ['t1n', 't1_n', 't1-native', 't1.nii'],
+                't1c': ['t1c', 't1_c', 't1-contrast', 't1ce.nii'],
+                't2f': ['t2f', 't2_f', 't2-flair', 'flair.nii'],
+                't2w': ['t2w', 't2_w', 't2-weighted', 't2.nii'],
+                'seg': ['seg', 'label', 'mask', 'groundtruth']
+            }
+            
             for root, _, filenames in os.walk(tmpdir):
                 for f in filenames:
-                    f_lower = f.lower()
-                    if f.endswith('.nii.gz'):
-                        if 't1n' in f_lower: files['t1n'] = os.path.join(root, f)
-                        elif 't1c' in f_lower: files['t1c'] = os.path.join(root, f)
-                        elif 't2f' in f_lower: files['t2f'] = os.path.join(root, f)
-                        elif 't2w' in f_lower: files['t2w'] = os.path.join(root, f)
-                        elif 'seg' in f_lower: files['seg'] = os.path.join(root, f)
+                    if f.endswith('.nii.gz') or f.endswith('.nii'):
+                        f_lower = f.lower()
+                        # Check each file type
+                        for file_type, pattern_list in patterns.items():
+                            if files[file_type] is None:  # Only find first match
+                                for pattern in pattern_list:
+                                    if pattern in f_lower:
+                                        files[file_type] = os.path.join(root, f)
+                                        break
+            
+            # Verify we found all required files except seg (which is optional)
+            required_files = ['t1n', 't1c', 't2f', 't2w']
+            missing = [ft for ft in required_files if files[ft] is None]
+            
+            if missing:
+                st.error(f"Missing required scan files: {', '.join(missing)}")
+                st.info("Expected files should contain these keywords in their names:")
+                st.info("T1n: 't1n', 't1_n', 't1-native'")
+                st.info("T1c: 't1c', 't1_c', 't1-contrast'")
+                st.info("T2f: 't2f', 't2_f', 't2-flair'")
+                st.info("T2w: 't2w', 't2_w', 't2-weighted'")
+                st.info("Segmentation (optional): 'seg', 'label', 'mask'")
+                return None
             
             return files
     except Exception as e:
