@@ -158,7 +158,7 @@ def visualize_results(original_data, prediction, ground_truth=None):
     
     # Create figure
     fig, axes = plt.subplots(3, 3 if ground_truth is not None else 2, 
-                            figsize=(15, 10))
+                            figsize=(10, 6))
     
     for i, slice_idx in enumerate(slice_indices):
         # Rotate images for better visualization
