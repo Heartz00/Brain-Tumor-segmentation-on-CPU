@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 import zipfile
 import tempfile
 from tensorflow.keras.utils import to_categorical
+import gdown
+import os
 
 # Configure app
 st.set_page_config(layout="wide")
@@ -16,11 +18,6 @@ st.title("Brain Tumor Segmentation using 3D U-Net")
 # Constants
 TARGET_SHAPE = (128, 128, 128, 4)
 CROP_PARAMS = ((56, 184), (56, 184), (13, 141))  # y, x, z cropping
-
-# Load default model
-@st.cache_resource
-import gdown  # For Google Drive
-import os
 
 @st.cache_resource
 def load_default_model():
