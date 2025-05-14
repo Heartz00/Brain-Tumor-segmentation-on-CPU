@@ -55,85 +55,87 @@ def load_default_model():
 model = load_default_model()
 
 # File processing functions
-def load_and_preprocess_nifti(filepath):
-    try:
-        img = nib.load(filepath).get_fdata()
-        scaler = MinMaxScaler()
-        return scaler.fit_transform(img.reshape(-1, img.shape[-1])).reshape(img.shape)
-    except Exception as e:
-        st.error(f"Error processing {filepath}: {str(e)}")
-        return None
-
 def process_uploaded_zip(uploaded_zip):
     try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Save the uploaded zip
-            zip_path = os.path.join(tmpdir, "upload.zip")
-            with open(zip_path, "wb") as f:
-                f.write(uploaded_zip.getbuffer())
+        # Create in-memory file objects
+        files = {
+            't1n': None, 't1c': None, 
+            't2f': None, 't2w': None,
+            'seg': None
+        }
+        
+        # Create a mapping of patterns to file types
+        patterns = {
+            '-t1n.': 't1n',
+            '-t1c.': 't1c',
+            '-t2f.': 't2f',
+            '-t2w.': 't2w',
+            '-seg.': 'seg'
+        }
+        
+        with zipfile.ZipFile(uploaded_zip, 'r') as z:
+            # First pass: identify all NIfTI files
+            nifti_files = [f for f in z.namelist() if f.lower().endswith(('.nii.gz', '.nii'))]
             
-            # Extract all files to a flat structure
-            extracted_files = []
-            with zipfile.ZipFile(zip_path, 'r') as z:
-                for file_in_zip in z.namelist():
-                    if file_in_zip.lower().endswith(('.nii.gz', '.nii')):
-                        # Extract to root of tmpdir
-                        filename = os.path.basename(file_in_zip)
-                        target_path = os.path.join(tmpdir, filename)
-                        
-                        # Handle potential name collisions
-                        counter = 1
-                        while os.path.exists(target_path):
-                            name, ext = os.path.splitext(filename)
-                            target_path = os.path.join(tmpdir, f"{name}_{counter}{ext}")
-                            counter += 1
-                        
-                        with open(target_path, 'wb') as out_file:
-                            out_file.write(z.read(file_in_zip))
-                        extracted_files.append(target_path)
-            
-            # Verify extraction worked
-            if not extracted_files:
+            if not nifti_files:
                 st.error("No NIfTI files found in ZIP archive")
                 return None
             
-            # Map files to types
-            files = {
-                't1n': None, 't1c': None, 
-                't2f': None, 't2w': None,
-                'seg': None
-            }
-            
-            for filepath in extracted_files:
-                filename = os.path.basename(filepath).lower()
-                if '-t1n.' in filename: files['t1n'] = filepath
-                elif '-t1c.' in filename: files['t1c'] = filepath
-                elif '-t2f.' in filename: files['t2f'] = filepath
-                elif '-t2w.' in filename: files['t2w'] = filepath
-                elif '-seg.' in filename: files['seg'] = filepath
-            
-            # Debug output
-            st.info("Extracted files:")
-            for filepath in extracted_files:
-                st.info(f"- {os.path.basename(filepath)}")
+            # Second pass: match files to types
+            for file_in_zip in nifti_files:
+                filename = file_in_zip.lower()
+                for pattern, file_type in patterns.items():
+                    if pattern in filename and files[file_type] is None:
+                        # Store the ZipInfo object and zip reference
+                        files[file_type] = (file_in_zip, z)
+                        break
             
             # Verify required files
             required_files = ['t1n', 't1c', 't2f', 't2w']
-            missing = [ft for ft in required_files if not files[ft]]
+            missing = [ft for ft in required_files if files[ft] is None]
             
             if missing:
                 st.error(f"Missing required files: {', '.join(missing)}")
-                st.info("Found files:")
-                for ft, path in files.items():
-                    if path: st.info(f"{ft.upper()}: {os.path.basename(path)}")
+                st.info("Files found in ZIP:")
+                for ft, val in files.items():
+                    if val: st.info(f"{ft.upper()}: {val[0]}")
                 return None
             
-            return files
+            # Convert to file-like objects
+            result = {}
+            for file_type, (file_in_zip, z) in files.items():
+                if file_in_zip:
+                    # Create a file-like object from the zip contents
+                    file_data = z.read(file_in_zip)
+                    result[file_type] = io.BytesIO(file_data)
+            
+            return result
             
     except Exception as e:
         st.error(f"ZIP processing failed: {str(e)}")
         return None
+
+def load_and_preprocess_nifti(file_obj):
+    try:
+        # Create a temporary file for nibabel to read
+        with tempfile.NamedTemporaryFile(suffix='.nii.gz', delete=False) as tmp:
+            tmp.write(file_obj.read())
+            tmp_path = tmp.name
         
+        # Load using nibabel
+        img = nib.load(tmp_path).get_fdata()
+        os.unlink(tmp_path)  # Clean up immediately
+        
+        # Preprocessing
+        scaler = MinMaxScaler()
+        return scaler.fit_transform(img.reshape(-1, img.shape[-1])).reshape(img.shape)
+    except Exception as e:
+        st.error(f"Error processing NIfTI file: {str(e)}")
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        return None
+
+
 # Model prediction
 def predict_volume(model, volume):
     try:
