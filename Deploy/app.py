@@ -73,23 +73,29 @@ def process_uploaded_zip(uploaded_zip):
                 f.write(uploaded_zip.getbuffer())
             
             # Extract all files to a flat structure
-            extracted_files = {}
+            extracted_files = []
             with zipfile.ZipFile(zip_path, 'r') as z:
-                for file_info in z.infolist():
-                    # Skip directories
-                    if file_info.is_dir():
-                        continue
-                    
-                    # Get just the filename (no path)
-                    filename = os.path.basename(file_info.filename)
-                    if not filename.lower().endswith(('.nii.gz', '.nii')):
-                        continue
-                    
-                    # Extract to temp dir
-                    extracted_path = os.path.join(tmpdir, filename)
-                    with open(extracted_path, 'wb') as f:
-                        f.write(z.read(file_info.filename))
-                    extracted_files[filename.lower()] = extracted_path
+                for file_in_zip in z.namelist():
+                    if file_in_zip.lower().endswith(('.nii.gz', '.nii')):
+                        # Extract to root of tmpdir
+                        filename = os.path.basename(file_in_zip)
+                        target_path = os.path.join(tmpdir, filename)
+                        
+                        # Handle potential name collisions
+                        counter = 1
+                        while os.path.exists(target_path):
+                            name, ext = os.path.splitext(filename)
+                            target_path = os.path.join(tmpdir, f"{name}_{counter}{ext}")
+                            counter += 1
+                        
+                        with open(target_path, 'wb') as out_file:
+                            out_file.write(z.read(file_in_zip))
+                        extracted_files.append(target_path)
+            
+            # Verify extraction worked
+            if not extracted_files:
+                st.error("No NIfTI files found in ZIP archive")
+                return None
             
             # Map files to types
             files = {
@@ -98,30 +104,34 @@ def process_uploaded_zip(uploaded_zip):
                 'seg': None
             }
             
-            # Match files to types
-            for filename, path in extracted_files.items():
-                if '-t1n.' in filename: files['t1n'] = path
-                elif '-t1c.' in filename: files['t1c'] = path
-                elif '-t2f.' in filename: files['t2f'] = path
-                elif '-t2w.' in filename: files['t2w'] = path
-                elif '-seg.' in filename: files['seg'] = path
+            for filepath in extracted_files:
+                filename = os.path.basename(filepath).lower()
+                if '-t1n.' in filename: files['t1n'] = filepath
+                elif '-t1c.' in filename: files['t1c'] = filepath
+                elif '-t2f.' in filename: files['t2f'] = filepath
+                elif '-t2w.' in filename: files['t2w'] = filepath
+                elif '-seg.' in filename: files['seg'] = filepath
             
             # Debug output
             st.info("Extracted files:")
-            for filename, path in extracted_files.items():
-                st.info(f"- {filename} -> {path} (exists: {os.path.exists(path)})")
+            for filepath in extracted_files:
+                st.info(f"- {os.path.basename(filepath)}")
             
             # Verify required files
             required_files = ['t1n', 't1c', 't2f', 't2w']
-            for file_type in required_files:
-                if not files[file_type] or not os.path.exists(files[file_type]):
-                    st.error(f"Missing or inaccessible {file_type.upper()} file")
-                    return None
+            missing = [ft for ft in required_files if not files[ft]]
+            
+            if missing:
+                st.error(f"Missing required files: {', '.join(missing)}")
+                st.info("Found files:")
+                for ft, path in files.items():
+                    if path: st.info(f"{ft.upper()}: {os.path.basename(path)}")
+                return None
             
             return files
             
     except Exception as e:
-        st.error(f"Error processing ZIP file: {str(e)}")
+        st.error(f"ZIP processing failed: {str(e)}")
         return None
         
 # Model prediction
