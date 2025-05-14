@@ -202,7 +202,7 @@ def main():
     
         with st.spinner("Processing scans..."):
             files = process_uploaded_zip(uploaded_zip)
-               st.info("Resolved file paths:")
+            st.info("Resolved file paths:")
             for k, v in files.items():
                 if v: st.info(f"{k}: {v} (exists: {os.path.exists(v)})")
         
