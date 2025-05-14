@@ -7,6 +7,9 @@ import tempfile
 from tensorflow.keras.models import load_model
 from matplotlib import pyplot as plt
 import time
+import requests
+import gdown
+from pathlib import Path
 
 # Set page config
 st.set_page_config(page_title="Glioma Segmentation", layout="wide")
@@ -14,18 +17,39 @@ st.set_page_config(page_title="Glioma Segmentation", layout="wide")
 # Initialize scaler
 scaler = MinMaxScaler()
 
-# Load the trained model (cache it to avoid reloading on every interaction)
+# Constants
+MODEL_URL = "https://drive.google.com/uc?id=1lV1SgafomQKwgv1NW2cjlpyb4LwZXFwX"
+MODEL_DIR = "saved_model"
+MODEL_PATH = os.path.join(MODEL_DIR, "3D_unet_100_epochs_2_batch_patch_training.keras")
+
+# Ensure model directory exists
+os.makedirs(MODEL_DIR, exist_ok=True)
+
+# Download model from Google Drive (cache this to avoid repeated downloads)
 @st.cache_resource
-def load_segmentation_model():
-    model_path = 'saved_model/3D_unet_100_epochs_2_batch_patch_training.keras'
+def download_and_load_model():
+    # Check if model already exists
+    if not os.path.exists(MODEL_PATH):
+        st.info("Downloading model from Google Drive... (This may take a few minutes)")
+        try:
+            # Download using gdown
+            gdown.download(MODEL_URL, MODEL_PATH, quiet=False)
+            
+            # Verify download
+            if not os.path.exists(MODEL_PATH):
+                raise FileNotFoundError("Model download failed")
+                
+        except Exception as e:
+            st.error(f"Failed to download model: {str(e)}")
+            return None
+    
+    # Load the model
     try:
-        model = load_model(model_path, compile=False)
+        model = load_model(MODEL_PATH, compile=False)
         return model
     except Exception as e:
         st.error(f"Error loading model: {str(e)}")
         return None
-
-model = load_segmentation_model()
 
 # Function to process uploaded files
 def process_uploaded_files(uploaded_files):
@@ -88,7 +112,7 @@ def prepare_input(modalities):
     return combined
 
 # Function to make prediction
-def make_prediction(input_data):
+def make_prediction(model, input_data):
     # Add batch dimension
     input_data = np.expand_dims(input_data, axis=0)
     
@@ -146,7 +170,16 @@ def main():
         2. Optionally upload a segmentation mask for comparison (must contain 'seg' in filename)
         3. Click 'Process and Predict' button
         4. View the segmentation results
+        
+        **Note:** The first run will download the model (~100MB) which may take a few minutes.
         """)
+    
+    # Load model (this will trigger download if needed)
+    model = download_and_load_model()
+    
+    if model is None:
+        st.error("Failed to load model. Please check the error message above.")
+        return
     
     # File uploader
     uploaded_files = st.file_uploader(
@@ -177,7 +210,7 @@ def main():
                 # Make prediction
                 with st.spinner("Making prediction..."):
                     start_time = time.time()
-                    prediction = make_prediction(input_data)
+                    prediction = make_prediction(model, input_data)
                     elapsed_time = time.time() - start_time
                 
                 st.success(f"Prediction completed in {elapsed_time:.2f} seconds")
