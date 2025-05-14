@@ -5,12 +5,13 @@ from sklearn.preprocessing import MinMaxScaler
 import os
 import tempfile
 from tensorflow.keras.models import load_model
-from matplotlib import pyplot as plt
+import matplotlib.pyplot as plt
 import time
 import gdown
-from pathlib import Path
-import tensorflow as tf
 from scipy.ndimage import zoom
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import tensorflow as tf
 
 # Force CPU-only operation to avoid CUDA errors
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
@@ -35,26 +36,18 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 # Download model from Google Drive (cache this to avoid repeated downloads)
 @st.cache_resource
 def download_and_load_model():
-    # Check if model already exists
     if not os.path.exists(MODEL_PATH):
         st.info("Downloading model from Google Drive... (This may take a few minutes)")
         try:
-            # Download using gdown
             gdown.download(MODEL_URL, MODEL_PATH, quiet=False)
-            
-            # Verify download
             if not os.path.exists(MODEL_PATH):
                 raise FileNotFoundError("Model download failed")
-                
         except Exception as e:
             st.error(f"Failed to download model: {str(e)}")
             return None
     
-    # Load the model
     try:
-        # Disable TensorFlow logging
         tf.get_logger().setLevel('ERROR')
-        
         model = load_model(MODEL_PATH, compile=False)
         return model
     except Exception as e:
@@ -64,24 +57,17 @@ def download_and_load_model():
 # Function to process uploaded files
 def process_uploaded_files(uploaded_files):
     modalities = {}
-    
     for uploaded_file in uploaded_files:
         file_name = uploaded_file.name.lower()
-        
-        # Save to temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix='.nii.gz') as tmp_file:
             tmp_file.write(uploaded_file.getbuffer())
             tmp_path = tmp_file.name
         
         try:
-            # Load NIfTI file
             img = nib.load(tmp_path)
             img_data = img.get_fdata()
-            
-            # Scale the data
             img_data = scaler.fit_transform(img_data.reshape(-1, img_data.shape[-1])).reshape(img_data.shape)
             
-            # Determine modality
             if 't1n' in file_name:
                 modalities['t1n'] = img_data
             elif 't1c' in file_name:
@@ -92,11 +78,7 @@ def process_uploaded_files(uploaded_files):
                 modalities['t2w'] = img_data
             elif 'seg' in file_name:
                 modalities['mask'] = img_data.astype(np.uint8)
-                
-        except Exception as e:
-            st.error(f"Error processing file {uploaded_file.name}: {str(e)}")
         finally:
-            # Clean up temporary file
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
     
@@ -104,12 +86,10 @@ def process_uploaded_files(uploaded_files):
 
 # Function to prepare input for model
 def prepare_input(modalities):
-    # Check we have all required modalities
     required = ['t1n', 't1c', 't2f', 't2w']
     if not all(m in modalities for m in required):
-        return None, None
+        return None, None, None
     
-    # Combine modalities
     combined = np.stack([
         modalities['t1n'],
         modalities['t1c'],
@@ -117,75 +97,82 @@ def prepare_input(modalities):
         modalities['t2w']
     ], axis=3)
     
-    # First crop to original expected size (128, 128, 128, 4)
     combined = combined[56:184, 56:184, 13:141, :]
     original_shape = combined.shape
-    
-    # Then resize to model's expected input shape (64, 64, 64, 4)
-    # Using simple downsampling for CPU compatibility
     downsampled = combined[::2, ::2, ::2, :]
     
     return downsampled, original_shape, combined
 
 # Function to make prediction
 def make_prediction(model, input_data):
-    # Add batch dimension
     input_data = np.expand_dims(input_data, axis=0)
-    
-    # Make prediction
     prediction = model.predict(input_data, verbose=0)
-    prediction_argmax = np.argmax(prediction, axis=4)[0, :, :, :]
-    
-    return prediction_argmax
+    return np.argmax(prediction, axis=4)[0, :, :, :]
 
-# Function to upsample prediction to original size
+# Function to upsample prediction
 def upsample_prediction(prediction, target_shape):
-    # Simple nearest-neighbor upsampling for CPU compatibility
     zoom_factors = (
         target_shape[0] / prediction.shape[0],
         target_shape[1] / prediction.shape[1],
         target_shape[2] / prediction.shape[2]
     )
-    return zoom(prediction, zoom_factors, order=0)  # order=0 for nearest-neighbor
+    return zoom(prediction, zoom_factors, order=0)
 
-# Function to visualize results
-def visualize_results(original_data, prediction, ground_truth=None):
-    # Select a modality to display (using T1c here)
-    image_data = original_data[:, :, :, 1]  # T1c is the second channel
-    
-    # Select some slices to display
+# Function to create zoomable visualization
+def create_zoomable_visualization(original_data, prediction, ground_truth=None):
+    # Select slices to display
     slice_indices = [30, 50, 70]
+    modality_idx = 1  # Using T1c for display
     
-    # Create figure
-    fig, axes = plt.subplots(3, 3 if ground_truth is not None else 2, 
-                            figsize=(15, 10))
+    # Create subplot figure
+    rows = 3
+    cols = 3 if ground_truth is not None else 2
+    fig = make_subplots(rows=rows, cols=cols,
+                        subplot_titles=[f"Slice {idx}" for idx in slice_indices]*cols,
+                        horizontal_spacing=0.05, vertical_spacing=0.05)
     
     for i, slice_idx in enumerate(slice_indices):
-        # Rotate images for better visualization
-        img_slice = np.rot90(image_data[:, :, slice_idx])
+        row = i + 1
+        
+        # Input image
+        img_slice = np.rot90(original_data[:, :, slice_idx, modality_idx])
+        fig.add_trace(go.Heatmap(z=img_slice, colorscale='gray', showscale=False),
+                     row=row, col=1)
+        
+        # Prediction
         pred_slice = np.rot90(prediction[:, :, slice_idx])
+        fig.add_trace(go.Heatmap(z=pred_slice, showscale=False),
+                     row=row, col=2)
         
-        # Plot input image
-        axes[i, 0].imshow(img_slice, cmap='gray')
-        axes[i, 0].set_title(f'Input Image - Slice {slice_idx}')
-        axes[i, 0].axis('off')
-        
-        # Plot prediction
-        axes[i, 1].imshow(pred_slice)
-        axes[i, 1].set_title(f'Prediction - Slice {slice_idx}')
-        axes[i, 1].axis('off')
-        
-        # Plot ground truth if available
+        # Ground truth if available
         if ground_truth is not None:
             gt_slice = np.rot90(ground_truth[:, :, slice_idx])
-            axes[i, 2].imshow(gt_slice)
-            axes[i, 2].set_title(f'Ground Truth - Slice {slice_idx}')
-            axes[i, 2].axis('off')
+            fig.add_trace(go.Heatmap(z=gt_slice, showscale=False),
+                         row=row, col=3)
     
-    plt.tight_layout()
+    # Update layout for better display
+    fig.update_layout(
+        height=800,
+        width=1000 if ground_truth is not None else 700,
+        margin=dict(l=20, r=20, t=50, b=20),
+        title_text="Glioma Segmentation Results (Zoomable)",
+        title_x=0.5
+    )
+    
+    # Add column titles
+    fig.update_annotations(
+        text="Input Image", x=0.16, y=1.05, xref="paper", yref="paper", showarrow=False
+    )
+    fig.update_annotations(
+        text="Prediction", x=0.5, y=1.05, xref="paper", yref="paper", showarrow=False
+    )
+    if ground_truth is not None:
+        fig.update_annotations(
+            text="Ground Truth", x=0.84, y=1.05, xref="paper", yref="paper", showarrow=False
+        )
+    
     return fig
 
-# Main app
 def main():
     st.title("3D Glioma Segmentation with U-Net")
     st.write("Upload MRI scans in NIfTI format for glioma segmentation")
@@ -193,23 +180,15 @@ def main():
     with st.expander("How to use this app"):
         st.markdown("""
         1. Upload **all four MRI modalities** (T1n, T1c, T2f, T2w) as NIfTI files (.nii.gz)
-        2. Optionally upload a segmentation mask for comparison (must contain 'seg' in filename)
+        2. Optionally upload a segmentation mask for comparison
         3. Click 'Process and Predict' button
-        4. View the segmentation results
-        
-        **Note:** 
-        - The first run will download the model (~100MB) which may take a few minutes.
-        - This version runs on CPU and may be slower than GPU-accelerated versions.
+        4. View and interact with the zoomable results
         """)
     
-    # Load model (this will trigger download if needed)
     model = download_and_load_model()
-    
     if model is None:
-        st.error("Failed to load model. Please check the error message above.")
         return
     
-    # File uploader
     uploaded_files = st.file_uploader(
         "Upload MRI scans (NIfTI format)",
         type=['nii', 'nii.gz'],
@@ -219,55 +198,36 @@ def main():
     if uploaded_files and len(uploaded_files) >= 4:
         if st.button("Process and Predict"):
             with st.spinner("Processing files..."):
-                # Process uploaded files
                 modalities = process_uploaded_files(uploaded_files)
-                
-                # Prepare input (returns downsampled, original shape, and original data)
                 input_data, original_shape, original_data = prepare_input(modalities)
                 
                 if input_data is None:
                     st.error("Could not prepare input data. Please ensure you've uploaded all required modalities.")
                     return
                 
-                # Get ground truth if available
-                ground_truth = modalities.get('mask', None)
-                if ground_truth is not None:
-                    ground_truth = ground_truth[56:184, 56:184, 13:141]
-                    ground_truth[ground_truth == 4] = 3  # Reassign label 4 to 3
+                ground_truth = None
+                if 'mask' in modalities:
+                    ground_truth = modalities['mask'][56:184, 56:184, 13:141]
+                    ground_truth[ground_truth == 4] = 3
                 
-                # Make prediction
-                with st.spinner("Making prediction (this may take a few minutes on CPU)..."):
+                with st.spinner("Making prediction..."):
                     start_time = time.time()
                     prediction = make_prediction(model, input_data)
-                    
-                    # Upsample prediction to original size
                     prediction = upsample_prediction(prediction, original_shape[:3])
-                    
-                    # Convert prediction to int32 for NIfTI compatibility
                     prediction = prediction.astype(np.int32)
-                    
                     elapsed_time = time.time() - start_time
                 
                 st.success(f"Prediction completed in {elapsed_time:.2f} seconds")
                 
-                # Visualize results using original size data
-                fig = visualize_results(original_data, prediction, ground_truth)
-                st.pyplot(fig)
+                # Create zoomable visualization
+                fig = create_zoomable_visualization(original_data, prediction, ground_truth)
+                st.plotly_chart(fig, use_container_width=True)
                 
-                # Provide download option for prediction
-                st.subheader("Download Prediction")
-                
-                # Create a temporary NIfTI file for download
+                # Download option
                 with tempfile.NamedTemporaryFile(suffix='.nii.gz', delete=False) as tmp_file:
-                    # Convert prediction to NIfTI with explicit dtype
-                    pred_img = nib.Nifti1Image(prediction, affine=np.eye(4), dtype=np.int32)
-                    nib.save(pred_img, tmp_file.name)
-                    
-                    # Read back the file data
+                    nib.save(nib.Nifti1Image(prediction, affine=np.eye(4), dtype=np.int32), tmp_file.name)
                     with open(tmp_file.name, 'rb') as f:
                         pred_data = f.read()
-                    
-                    # Clean up
                     os.unlink(tmp_file.name)
                 
                 st.download_button(
