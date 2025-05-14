@@ -9,7 +9,8 @@ import zipfile
 import tempfile
 from tensorflow.keras.utils import to_categorical
 import gdown
-import requests
+import io  # Added for BytesIO
+import shutil  # Added for file operations
 
 # Configure app
 st.set_page_config(layout="wide")
@@ -54,16 +55,8 @@ def load_default_model():
 # Initialize model at the start
 model = load_default_model()
 
-# File processing functions
 def process_uploaded_zip(uploaded_zip):
     try:
-        # Create in-memory file objects
-        files = {
-            't1n': None, 't1c': None, 
-            't2f': None, 't2w': None,
-            'seg': None
-        }
-        
         # Create a mapping of patterns to file types
         patterns = {
             '-t1n.': 't1n',
@@ -73,70 +66,73 @@ def process_uploaded_zip(uploaded_zip):
             '-seg.': 'seg'
         }
         
-        with zipfile.ZipFile(uploaded_zip, 'r') as z:
-            # First pass: identify all NIfTI files
-            nifti_files = [f for f in z.namelist() if f.lower().endswith(('.nii.gz', '.nii'))]
+        # Create dictionary to store found files
+        found_files = {ft: None for ft in patterns.values()}
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Save the uploaded zip to a temporary file
+            zip_path = os.path.join(tmpdir, "upload.zip")
+            with open(zip_path, "wb") as f:
+                f.write(uploaded_zip.getbuffer())
             
-            if not nifti_files:
-                st.error("No NIfTI files found in ZIP archive")
-                return None
+            # Extract all files while flattening the structure
+            extracted_files = []
+            with zipfile.ZipFile(zip_path, 'r') as z:
+                for file_in_zip in z.namelist():
+                    if file_in_zip.lower().endswith(('.nii.gz', '.nii')):
+                        # Get the base filename
+                        filename = os.path.basename(file_in_zip)
+                        target_path = os.path.join(tmpdir, filename)
+                        
+                        # Handle potential name collisions
+                        counter = 1
+                        while os.path.exists(target_path):
+                            name, ext = os.path.splitext(filename)
+                            target_path = os.path.join(tmpdir, f"{name}_{counter}{ext}")
+                            counter += 1
+                        
+                        # Extract the file
+                        with open(target_path, 'wb') as out_file:
+                            out_file.write(z.read(file_in_zip))
+                        extracted_files.append(target_path)
             
-            # Second pass: match files to types
-            for file_in_zip in nifti_files:
-                filename = file_in_zip.lower()
+            # Match files to types
+            for filepath in extracted_files:
+                filename = os.path.basename(filepath).lower()
                 for pattern, file_type in patterns.items():
-                    if pattern in filename and files[file_type] is None:
-                        # Store the ZipInfo object and zip reference
-                        files[file_type] = (file_in_zip, z)
+                    if pattern in filename and found_files[file_type] is None:
+                        found_files[file_type] = filepath
                         break
             
             # Verify required files
             required_files = ['t1n', 't1c', 't2f', 't2w']
-            missing = [ft for ft in required_files if files[ft] is None]
+            missing = [ft for ft in required_files if not found_files[ft]]
             
             if missing:
                 st.error(f"Missing required files: {', '.join(missing)}")
                 st.info("Files found in ZIP:")
-                for ft, val in files.items():
-                    if val: st.info(f"{ft.upper()}: {val[0]}")
+                for ft, path in found_files.items():
+                    if path: st.info(f"{ft.upper()}: {os.path.basename(path)}")
                 return None
             
-            # Convert to file-like objects
-            result = {}
-            for file_type, (file_in_zip, z) in files.items():
-                if file_in_zip:
-                    # Create a file-like object from the zip contents
-                    file_data = z.read(file_in_zip)
-                    result[file_type] = io.BytesIO(file_data)
-            
-            return result
+            return found_files
             
     except Exception as e:
         st.error(f"ZIP processing failed: {str(e)}")
         return None
 
-def load_and_preprocess_nifti(file_obj):
+def load_and_preprocess_nifti(filepath):
     try:
-        # Create a temporary file for nibabel to read
-        with tempfile.NamedTemporaryFile(suffix='.nii.gz', delete=False) as tmp:
-            tmp.write(file_obj.read())
-            tmp_path = tmp.name
-        
         # Load using nibabel
-        img = nib.load(tmp_path).get_fdata()
-        os.unlink(tmp_path)  # Clean up immediately
+        img = nib.load(filepath).get_fdata()
         
         # Preprocessing
         scaler = MinMaxScaler()
         return scaler.fit_transform(img.reshape(-1, img.shape[-1])).reshape(img.shape)
     except Exception as e:
-        st.error(f"Error processing NIfTI file: {str(e)}")
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+        st.error(f"Error processing {filepath}: {str(e)}")
         return None
 
-
-# Model prediction
 def predict_volume(model, volume):
     try:
         # Add batch dimension
@@ -152,7 +148,6 @@ def predict_volume(model, volume):
         st.error(f"Prediction failed: {str(e)}")
         return None
 
-# UI Components
 def show_results(input_vol, prediction, ground_truth=None):
     slices = [30, 64, 90]  # Representative slices
     
@@ -176,12 +171,11 @@ def show_results(input_vol, prediction, ground_truth=None):
     
     plt.tight_layout()
     st.pyplot(fig)
+    plt.close(fig)  # Prevent memory leaks
 
-# Main app flow
 def main():
     global model
     
-    # Model upload section (keep this unchanged)
     with st.sidebar:
         st.header("Model Configuration")
         uploaded_model = st.file_uploader("Upload custom model (.keras)", type=['keras'])
@@ -204,9 +198,19 @@ def main():
                 st.info("Reverting to default model")
                 model = load_default_model()
     
-    # Main processing section - THIS IS THE FIXED PART
     st.header("BRAIN TUMOR SEGMENTATION WITH 3D UNET")
-    uploaded_zip = st.file_uploader("Upload MRI scans (ZIP containing T1n, T1c, T2f, T2w)", type=['zip'])
+    st.markdown("""
+    ### Upload Instructions:
+    1. Prepare a ZIP file containing these 4 scans:
+       - T1 Native (filename must contain 't1n')
+       - T1 Contrast (filename must contain 't1c')
+       - T2 Flair (filename must contain 't2f')
+       - T2 Weighted (filename must contain 't2w')
+    2. Example valid names:  
+       `BraTS-001-t1n.nii.gz`, `patient1_t1c.nii`, `case5_T2_FLAIR.nii.gz`
+    """)
+    
+    uploaded_zip = st.file_uploader("Upload MRI scans ZIP", type=['zip'])
     
     if uploaded_zip:
         if model is None:
@@ -214,30 +218,20 @@ def main():
             return
     
         with st.spinner("Processing scans..."):
+            # Process the ZIP file
             files = process_uploaded_zip(uploaded_zip)
-            st.info("Resolved file paths:")
-            for k, v in files.items():
-                if v: st.info(f"{k}: {v} (exists: {os.path.exists(v)})")
-        
-            # Updated check - only validates required files (excluding SEG)
-            required_files = ['t1n', 't1c', 't2f', 't2w']
-            if files is None or any(files[ft] is None for ft in required_files):
-                st.error("Missing required scan files in the uploaded ZIP")
+            if files is None:
                 return
             
-            # Rest of your processing code remains unchanged...
+            # Load and preprocess each modality
             modalities = {}
-            
             for name, path in files.items():
-                if name != 'seg' and path:  # Only process if path exists
-                    try:
-                        modalities[name] = load_and_preprocess_nifti(path)
-                        if modalities[name] is None:
-                            return
-                    except Exception as e:
-                        st.error(f"Failed to load {name} from {path}: {str(e)}")
+                if name != 'seg' and path:
+                    modalities[name] = load_and_preprocess_nifti(path)
+                    if modalities[name] is None:
                         return
             
+            # Combine and crop channels
             combined = np.stack([
                 modalities['t1n'],
                 modalities['t1c'],
@@ -254,7 +248,7 @@ def main():
             
             # Optional ground truth handling
             gt = None
-            if files['seg']:  # This is now safely optional
+            if files.get('seg'):
                 try:
                     gt = nib.load(files['seg']).get_fdata()
                     gt = gt[
@@ -263,15 +257,17 @@ def main():
                         CROP_PARAMS[2][0]:CROP_PARAMS[2][1]
                     ]
                     gt[gt == 4] = 3
-                except:
-                    st.warning("Could not load segmentation file (optional)")
+                except Exception as e:
+                    st.warning(f"Could not load segmentation file: {str(e)}")
             
+            # Run prediction
             prediction = predict_volume(model, combined)
             
             if prediction is not None:
                 st.success("Segmentation complete!")
                 show_results(combined, prediction, gt)
                 
+                # Save and offer download
                 output_path = "segmentation_result.nii.gz"
                 nib.save(
                     nib.Nifti1Image(
@@ -291,6 +287,7 @@ def main():
                 
                 if os.path.exists(output_path):
                     os.remove(output_path)
+
 if __name__ == "__main__":
     if model is None:
         st.error("Failed to load model. Please check your internet connection and try again.")
