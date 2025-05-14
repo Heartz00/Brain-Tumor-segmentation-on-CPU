@@ -75,67 +75,38 @@ def process_uploaded_zip(uploaded_zip):
             with zipfile.ZipFile(zip_path, 'r') as z:
                 z.extractall(tmpdir)
             
-            # Initialize files dictionary (SEG is optional)
+            # Initialize files dictionary
             files = {
                 't1n': None, 't1c': None, 
                 't2f': None, 't2w': None,
-                'seg': None  # This remains optional
+                'seg': None
             }
             
-            # Define the specific patterns in your filenames
-            patterns = {
-                't1n': ['-t1n.'],
-                't1c': ['-t1c.'],
-                't2f': ['-t2f.'],
-                't2w': ['-t2w.'],
-                'seg': ['-seg.']  # Still included but not required
-            }
-            
-            # Find the right base path (handles nested folders)
-            base_path = tmpdir
-            possible_paths = [
-                os.path.join(tmpdir, "data_for test", "data_for test"),
-                os.path.join(tmpdir, "data_for test"),
-                tmpdir
-            ]
-            
-            for path in possible_paths:
-                if os.path.exists(path):
-                    base_path = path
-                    break
-            
-            # Search for files
-            for root, _, filenames in os.walk(base_path):
+            # Search through all files in the extracted directory
+            for root, _, filenames in os.walk(tmpdir):
                 for f in filenames:
                     f_lower = f.lower()
-                    if f.endswith('.nii.gz') or f.endswith('.nii'):
-                        if '-t1n.' in f_lower: files['t1n'] = os.path.join(root, f)
-                        elif '-t1c.' in f_lower: files['t1c'] = os.path.join(root, f)
-                        elif '-t2f.' in f_lower: files['t2f'] = os.path.join(root, f)
-                        elif '-t2w.' in f_lower: files['t2w'] = os.path.join(root, f)
-                        elif '-seg.' in f_lower: files['seg'] = os.path.join(root, f)
+                    if f.lower().endswith(('.nii.gz', '.nii')):
+                        full_path = os.path.join(root, f)
+                        # Check for your specific pattern
+                        if '-t1n.' in f_lower: files['t1n'] = full_path
+                        elif '-t1c.' in f_lower: files['t1c'] = full_path
+                        elif '-t2f.' in f_lower: files['t2f'] = full_path
+                        elif '-t2w.' in f_lower: files['t2w'] = full_path
+                        elif '-seg.' in f_lower: files['seg'] = full_path
             
-            # Debug output
-            st.success("Detected scan files:")
-            cols = st.columns(4)
-            with cols[0]: st.info(f"T1N: {os.path.basename(files['t1n']) if files['t1n'] else '❌ Not found'}")
-            with cols[1]: st.info(f"T1C: {os.path.basename(files['t1c']) if files['t1c'] else '❌ Not found'}")
-            with cols[2]: st.info(f"T2F: {os.path.basename(files['t2f']) if files['t2f'] else '❌ Not found'}")
-            with cols[3]: st.info(f"T2W: {os.path.basename(files['t2w']) if files['t2w'] else '❌ Not found'}")
+            # Verify paths exist
+            for file_type, path in files.items():
+                if path and not os.path.exists(path):
+                    st.error(f"File found but cannot be accessed: {path}")
+                    return None
             
-            # Only these 4 files are required
+            # Verify we found all required files (excluding seg)
             required_files = ['t1n', 't1c', 't2f', 't2w']
             missing = [ft for ft in required_files if files[ft] is None]
             
             if missing:
-                st.error(f"❌ Missing required scan files: {', '.join(missing)}")
-                st.info("Directory structure in ZIP:")
-                for root, dirs, files_in_dir in os.walk(base_path):
-                    level = root.replace(base_path, '').count(os.sep)
-                    indent = ' ' * 4 * level
-                    st.info(f"{indent}{os.path.basename(root)}/")
-                    for f in files_in_dir:
-                        st.info(f"{indent}    {f}")
+                st.error(f"Missing required scan files: {', '.join(missing)}")
                 return None
             
             return files
@@ -219,10 +190,13 @@ def main():
         if model is None:
             st.error("No model available for prediction. Please try refreshing the page.")
             return
-            
+    
         with st.spinner("Processing scans..."):
             files = process_uploaded_zip(uploaded_zip)
-            
+               st.info("Resolved file paths:")
+            for k, v in files.items():
+                if v: st.info(f"{k}: {v} (exists: {os.path.exists(v)})")
+        
             # Updated check - only validates required files (excluding SEG)
             required_files = ['t1n', 't1c', 't2f', 't2w']
             if files is None or any(files[ft] is None for ft in required_files):
