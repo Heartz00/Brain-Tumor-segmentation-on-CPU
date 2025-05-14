@@ -9,6 +9,11 @@ from matplotlib import pyplot as plt
 import time
 import gdown
 from pathlib import Path
+import tensorflow as tf
+from scipy.ndimage import zoom
+
+# Force CPU-only operation to avoid CUDA errors
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 # Set page config
 st.set_page_config(page_title="Glioma Segmentation", layout="wide")
@@ -47,6 +52,9 @@ def download_and_load_model():
     
     # Load the model
     try:
+        # Disable TensorFlow logging
+        tf.get_logger().setLevel('ERROR')
+        
         model = load_model(MODEL_PATH, compile=False)
         return model
     except Exception as e:
@@ -89,7 +97,8 @@ def process_uploaded_files(uploaded_files):
             st.error(f"Error processing file {uploaded_file.name}: {str(e)}")
         finally:
             # Clean up temporary file
-            os.unlink(tmp_path)
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
     
     return modalities
 
@@ -98,7 +107,7 @@ def prepare_input(modalities):
     # Check we have all required modalities
     required = ['t1n', 't1c', 't2f', 't2w']
     if not all(m in modalities for m in required):
-        return None
+        return None, None
     
     # Combine modalities
     combined = np.stack([
@@ -110,12 +119,13 @@ def prepare_input(modalities):
     
     # First crop to original expected size (128, 128, 128, 4)
     combined = combined[56:184, 56:184, 13:141, :]
+    original_shape = combined.shape
     
     # Then resize to model's expected input shape (64, 64, 64, 4)
     # Using simple downsampling for CPU compatibility
     downsampled = combined[::2, ::2, ::2, :]
     
-    return downsampled, combined  # Return both downsampled and original
+    return downsampled, original_shape, combined
 
 # Function to make prediction
 def make_prediction(model, input_data):
@@ -123,7 +133,7 @@ def make_prediction(model, input_data):
     input_data = np.expand_dims(input_data, axis=0)
     
     # Make prediction
-    prediction = model.predict(input_data)
+    prediction = model.predict(input_data, verbose=0)
     prediction_argmax = np.argmax(prediction, axis=4)[0, :, :, :]
     
     return prediction_argmax
@@ -131,7 +141,6 @@ def make_prediction(model, input_data):
 # Function to upsample prediction to original size
 def upsample_prediction(prediction, target_shape):
     # Simple nearest-neighbor upsampling for CPU compatibility
-    from scipy.ndimage import zoom
     zoom_factors = (
         target_shape[0] / prediction.shape[0],
         target_shape[1] / prediction.shape[1],
@@ -140,9 +149,9 @@ def upsample_prediction(prediction, target_shape):
     return zoom(prediction, zoom_factors, order=0)  # order=0 for nearest-neighbor
 
 # Function to visualize results
-def visualize_results(input_data, prediction, original_shape_data=None, ground_truth=None):
+def visualize_results(original_data, prediction, ground_truth=None):
     # Select a modality to display (using T1c here)
-    image_data = original_shape_data[:, :, :, 1] if original_shape_data is not None else input_data[:, :, :, 1]
+    image_data = original_data[:, :, :, 1]  # T1c is the second channel
     
     # Select some slices to display
     slice_indices = [30, 50, 70]
@@ -213,8 +222,8 @@ def main():
                 # Process uploaded files
                 modalities = process_uploaded_files(uploaded_files)
                 
-                # Prepare input (returns both downsampled and original)
-                input_data, original_shape_data = prepare_input(modalities)
+                # Prepare input (returns downsampled, original shape, and original data)
+                input_data, original_shape, original_data = prepare_input(modalities)
                 
                 if input_data is None:
                     st.error("Could not prepare input data. Please ensure you've uploaded all required modalities.")
@@ -232,14 +241,17 @@ def main():
                     prediction = make_prediction(model, input_data)
                     
                     # Upsample prediction to original size
-                    prediction = upsample_prediction(prediction, original_shape_data.shape[:3])
+                    prediction = upsample_prediction(prediction, original_shape[:3])
+                    
+                    # Convert prediction to int32 for NIfTI compatibility
+                    prediction = prediction.astype(np.int32)
                     
                     elapsed_time = time.time() - start_time
                 
                 st.success(f"Prediction completed in {elapsed_time:.2f} seconds")
                 
                 # Visualize results using original size data
-                fig = visualize_results(input_data, prediction, original_shape_data, ground_truth)
+                fig = visualize_results(original_data, prediction, ground_truth)
                 st.pyplot(fig)
                 
                 # Provide download option for prediction
@@ -247,8 +259,8 @@ def main():
                 
                 # Create a temporary NIfTI file for download
                 with tempfile.NamedTemporaryFile(suffix='.nii.gz', delete=False) as tmp_file:
-                    # Convert prediction to NIfTI
-                    pred_img = nib.Nifti1Image(prediction, affine=np.eye(4))
+                    # Convert prediction to NIfTI with explicit dtype
+                    pred_img = nib.Nifti1Image(prediction, affine=np.eye(4), dtype=np.int32)
                     nib.save(pred_img, tmp_file.name)
                     
                     # Read back the file data
