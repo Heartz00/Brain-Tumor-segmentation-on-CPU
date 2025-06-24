@@ -20,14 +20,13 @@ st.set_page_config(page_title="Glioma Segmentation", layout="wide")
 
 # Initialize scaler
 scaler = MinMaxScaler()
-
 # Constants
-MODEL_URL = "https://drive.google.com/uc?id=1lV1SgafomQKwgv1NW2cjlpyb4LwZXFwX"
+MODEL_URL = "https://drive.google.com/uc?id=15DvYjyBHo-OgI-oVPrruocNr_WUauQEk"
 MODEL_DIR = "saved_model"
 MODEL_PATH = os.path.join(MODEL_DIR, "3D_unet_100_epochs_2_batch_patch_training.keras")
 
-# Model expects (64, 64, 64, 4) input
-TARGET_SHAPE = (64, 64, 64, 4)
+# Model expects (96, 96, 96, 4) input
+TARGET_SHAPE = (96, 96, 96, 4)
 
 # Ensure model directory exists
 os.makedirs(MODEL_DIR, exist_ok=True)
@@ -154,7 +153,7 @@ def visualize_results(original_data, prediction, ground_truth=None):
     image_data = original_data[:, :, :, 1]  # T1c is the second channel
     
     # Select some slices to display
-    slice_indices = [75, 90, 100]
+    slice_indices = [50, 75, 90]
     
     # Create figure
     fig, axes = plt.subplots(3, 3 if ground_truth is not None else 2, 
