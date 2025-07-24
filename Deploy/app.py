@@ -26,7 +26,7 @@ MODEL_DIR = "saved_model"
 MODEL_PATH = os.path.join(MODEL_DIR, "3D_unet_100_epochs_2_batch_patch_training.keras")
 
 # Model expects (96, 96, 96, 4) input
-TARGET_SHAPE = (96, 96, 96, 4)
+TARGET_SHAPE = (64, 64, 64, 4)
 
 # Ensure model directory exists
 os.makedirs(MODEL_DIR, exist_ok=True)
